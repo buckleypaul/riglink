@@ -1,0 +1,14 @@
+# Append to the target project's prj.conf to enable riglink.
+CONFIG_RIGLINK=y
+CONFIG_JCON=y
+CONFIG_JCON_ENABLE_FLOAT=y   # required only if any signature uses float/double
+CONFIG_SERIAL=y
+CONFIG_REBOOT=y              # required by the sys_reboot() shim
+CONFIG_LOG=y                 # optional: lets rig_log() passthrough work
+
+# Optional: let riglink own a dedicated pump thread instead of the main loop.
+# If set, do NOT also call rig_init()/rig_run() from the app.
+# CONFIG_RIGLINK_THREAD=y
+
+# Optional: enable rig.peek / rig.poke memory access commands.
+# CONFIG_RIGLINK_MEM_ACCESS=y

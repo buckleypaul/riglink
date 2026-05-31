@@ -1,0 +1,38 @@
+# riglink
+
+> Host-driven firmware testing over serial. Two halves in one repo: a Zephyr/standalone
+> **C library** that exposes firmware functions over a serial link as sentinel-framed JSON
+> (via the vendored `jcon` emitter), and a **Python/pytest host library** that drives them.
+> A host call always returns a dict `{"ret": <value>, **extras}`. A change to the wire
+> protocol or a type keyword usually touches both halves.
+
+Reading order for an agent: to **integrate riglink into another C/Zephyr library and test
+it**, start with the integration runbook. To understand or modify riglink itself, read
+the architecture and project-instruction docs. Use README for a feature-level tour.
+
+## Integrating riglink into your library (start here for that task)
+
+- [Integration skill](plugins/riglink-integration/SKILL.md): step-by-step runbook — add the build dependency, implement the three shims, expose functions, drive the pump, write host pytest, verify.
+- [Integration reference](plugins/riglink-integration/references/reference.md): full type-keyword table, wire-protocol line shapes, every Kconfig knob, the `rig` CLI, the pytest plugin, the no-hardware native_sim path, and gotchas.
+- [Shim + main template](plugins/riglink-integration/assets/rig_shims_template.c): copy-from C template for `rig_putc`/`rig_getc`/`rig_reset` and the pump loop.
+- [prj.conf snippet](plugins/riglink-integration/assets/prj.conf.snippet): Kconfig to enable riglink in a Zephyr target.
+- [Host test template](plugins/riglink-integration/assets/test_template.py): pytest skeleton showing the `dev` fixture, `{"ret": ...}` asserts, events, and errors.
+- [Worked example](samples/echo/): a complete minimal firmware app — shims, exposed surface, ISR event. The best concrete template to clone.
+
+## Core documentation
+
+- [README](README.md): quickstart for both halves — firmware annotations, Python host, `rig` CLI, pytest plugin, Kconfig.
+- [ARCHITECTURE](ARCHITECTURE.md): internals — wire protocol, the macro/type-keyword machinery, the pump, the host reader thread, and an end-to-end trace of one call.
+- [CLAUDE.md](CLAUDE.md): project instructions for an agent working *inside* riglink (commands, layout, gotchas).
+
+## Source map
+
+- [include/riglink.h](include/riglink.h): public C API + user-facing `RIG_*` macros.
+- [include/riglink_pp.h](include/riglink_pp.h): preprocessor type-keyword dictionaries (edit all in parallel to add a scalar type).
+- src/riglink_*.c: core (pump), proto (input), cmd (registry), io (output).
+- [python/riglink/](python/riglink/): host library — `_wire`, `transport`, `device`, `cli`, `pytest_plugin`.
+
+## Optional
+
+- [Design spec](docs/superpowers/specs/2026-05-11-riglink-design.md) and [return-shape spec](docs/superpowers/specs/2026-05-12-ret-return-shape.md): rationale and intentional deviations.
+- [third_party/jcon/](third_party/jcon/): vendored JSON emitter — a **git submodule**; clone/checkout/`west update` with `--recurse-submodules`.

@@ -1,0 +1,19 @@
+{
+  "name": "riglink",
+  "description": "Plugins for working with riglink, the host-driven firmware-testing library.",
+  "owner": {
+    "name": "Paul Buckley",
+    "email": "buckleypa@gmail.com"
+  },
+  "plugins": [
+    {
+      "name": "riglink-integration",
+      "source": "./plugins/riglink-integration",
+      "description": "Runbook + templates for integrating riglink into a separate C / Zephyr library and testing it from Python/pytest.",
+      "version": "0.1.0",
+      "author": {
+        "name": "Paul Buckley"
+      }
+    }
+  ]
+}

@@ -1,0 +1,132 @@
+config RIGLINK
+	bool "riglink: host-driven firmware test harness"
+	select JCON
+	select STATIC_INIT_GNU
+	help
+	  Enable the riglink firmware test harness: expose firmware functions
+	  over a serial link, with results emitted as sentinel-framed JSON.
+
+	  RIG_EXPOSE / RIG_FN / RIG_EXPOSE_VAR register commands via
+	  __attribute__((constructor)); STATIC_INIT_GNU makes Zephyr run the
+	  .init_array entries at boot. (A toolchain/config that already runs
+	  .init_array doesn't need this, but selecting it is harmless.)
+
+if RIGLINK
+
+config RIGLINK_LINE_BUF_SIZE
+	int "Maximum input command line length (bytes)"
+	default 128
+
+config RIGLINK_MAX_ARGS
+	int "Maximum arguments per command"
+	default 8
+	help
+	  Also the upper bound on argument-type lists accepted by RIG_EXPOSE /
+	  RIG_FN. Functions with more arguments must be wrapped by hand.
+
+config RIGLINK_SCRATCH_SIZE
+	int "Scratch buffer for str arguments (bytes)"
+	default 128
+
+config RIGLINK_EVENT_QUEUE_DEPTH
+	int "Depth of the ISR-deferred event ring"
+	default 8
+
+config RIGLINK_EXTRA_FIELDS_MAX
+	int "Maximum rig_emit() calls buffered per RIG_FN body"
+	default 16
+	range 1 255
+	help
+	  rig_emit() calls made from inside a RIG_FN body are captured into a
+	  fixed array (the response line they belong to isn't open yet) and
+	  replayed into the response. This is that array's size; a body that
+	  exceeds it gets "_emit_overflow":true on its response instead. Each
+	  slot is small (a tagged value plus two arena pointers), so shrink this
+	  on RAM-tight targets.
+
+config RIGLINK_EXTRA_FIELDS_CAP
+	int "Byte arena for buffered rig_emit() field name/value strings"
+	default 512
+	help
+	  Companion to RIGLINK_EXTRA_FIELDS_MAX: the names (and string values)
+	  passed to rig_emit() inside a RIG_FN body are copied here because the
+	  caller's pointers may not outlive the command. Overflow is reported the
+	  same way (one "_emit_overflow":true on the response).
+
+config RIGLINK_SENTINEL_TEXT
+	string "ASCII tag after the 0x1e (RS) byte on each output line"
+	default "RIG "
+	help
+	  Every riglink output line is prefixed with the 0x1e (ASCII RS) byte
+	  followed by this tag. The 0x1e byte is always emitted by the library
+	  (Kconfig strings cannot carry a raw control byte); this option only
+	  customizes the human-readable tag after it. The default makes the full
+	  on-wire prefix "\x1eRIG ". If you change it, pass the matching value to
+	  the host (e.g. pytest --riglink-sentinel, or Device(sentinel=...)).
+
+config RIGLINK_MINIFY
+	bool "Minify emitted JSON"
+	default y
+
+config RIGLINK_LOG
+	bool "Enable rig_log() passthrough"
+	default y
+
+config RIGLINK_MEM_ACCESS
+	bool "Enable rig.peek / rig.poke built-ins"
+	default n
+	help
+	  Raw memory read/write over the link. A footgun on MPU/MMU targets and a
+	  security risk if left enabled in production builds.
+
+config RIGLINK_THREAD
+	bool "Spawn a dedicated thread running the rig_run() pump"
+	default n
+	depends on !RIGLINK_BACKEND_SHELL
+	help
+	  When enabled, riglink starts its own thread that calls rig_init() once
+	  and then rig_run() in a loop. The application must NOT also call
+	  rig_init() / rig_run() itself in that case — the dedicated thread owns
+	  the pump.
+
+config RIGLINK_THREAD_STACK_SIZE
+	int "riglink thread stack size"
+	default 2048
+	depends on RIGLINK_THREAD
+	help
+	  A command trampoline with `str` arguments puts up to
+	  8 * RIG_STR_ARG_SIZE bytes of argument buffers on the stack, on top of
+	  the user function's own frame, so give this thread some headroom.
+
+config RIGLINK_THREAD_PRIO
+	int "riglink thread priority"
+	default 5
+	depends on RIGLINK_THREAD
+
+config RIGLINK_BACKEND_SHELL
+	bool "Dispatch riglink commands via Zephyr's shell subsystem"
+	default n
+	select SHELL
+	select SHELL_BACKEND_SERIAL
+	help
+	  Bridge riglink to Zephyr's shell: commands are registered as
+	  subcommands of a root "rig" command, the shell thread does line
+	  assembly and tokenisation, and response bytes are written through
+	  shell_fprintf(). The application MUST NOT implement rig_putc /
+	  rig_getc and MUST NOT call rig_init() / rig_run() — the shim does
+	  all of that. Mutually exclusive with RIGLINK_THREAD.
+
+	  Set CONFIG_SHELL_PROMPT_UART="", CONFIG_SHELL_VT100_COMMANDS=n,
+	  CONFIG_SHELL_ECHO_STATUS=n in your prj.conf so the shell does not
+	  inject prompts or escape sequences into the JSON stream.
+
+config RIGLINK_SHELL_EVENT_POLL_MS
+	int "Period for draining the ISR-deferred event ring (ms)"
+	default 10
+	depends on RIGLINK_BACKEND_SHELL
+	help
+	  With the shell backend, rig_run() is not called — its event-flush
+	  responsibility moves to a delayable k_work item that fires on this
+	  period. Lower means lower event latency at the cost of more wakeups.
+
+endif # RIGLINK

@@ -1,0 +1,19 @@
+manifest:
+  remotes:
+    - name: zephyrproject-rtos
+      url-base: https://github.com/zephyrproject-rtos
+    - name: buckleypaul
+      url-base: https://github.com/buckleypaul
+
+  projects:
+    - name: zephyr
+      remote: zephyrproject-rtos
+      revision: v4.4.0
+      import: true
+    - name: jcon
+      remote: buckleypaul
+      revision: main
+      path: modules/lib/jcon
+
+  self:
+    path: modules/lib/riglink

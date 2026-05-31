@@ -1,0 +1,41 @@
+name: Zephyr
+on:
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  build-and-integration:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout riglink
+        uses: actions/checkout@v4
+        with: { submodules: recursive }
+      - name: Set up Zephyr
+        uses: zephyrproject-rtos/action-zephyr-setup@v1
+        with:
+          app-path: .
+          # native_sim builds with host gcc; the nrf52 build needs the SDK ARM toolchain.
+          toolchains: arm-zephyr-eabi
+      - name: Build samples/echo for native_sim
+        run: west build -b native_sim -d build-ns samples/echo
+      - name: Build samples/echo for nrf52dk/nrf52832
+        run: west build -b nrf52dk/nrf52832 -d build-nrf samples/echo
+      # native_sim build of echo_shell is a hard build gate: the integration
+      # harness skips (not fails) on a build error, so this step is what makes a
+      # broken shell-backend build fail CI. The functional drive happens below.
+      - name: Build samples/echo_shell for native_sim
+        run: west build -b native_sim -d build-ns-shell samples/echo_shell
+      - name: Build samples/echo_shell for nrf52dk/nrf52832
+        run: west build -b nrf52dk/nrf52832 -d build-nrf-shell samples/echo_shell
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with: { python-version: "3.12" }
+      # The integration suite is parametrized over both samples: it builds and
+      # launches samples/echo (poll backend) AND samples/echo_shell (shell
+      # backend, driven via shell_root="rig"), so this run drives echo_shell
+      # functionally rather than only building it.
+      - name: Run integration tests against native_sim (echo + echo_shell)
+        run: |
+          cd python && pip install -e . && cd ..
+          python -m pytest tests/integration -q

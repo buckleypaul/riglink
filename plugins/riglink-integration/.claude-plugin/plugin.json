@@ -1,0 +1,13 @@
+{
+  "name": "riglink-integration",
+  "description": "Task-oriented runbook for integrating the riglink firmware-testing library into a separate C / Zephyr library: wire the three shims, expose functions over serial, configure the build, and write Python/pytest host tests.",
+  "version": "0.1.0",
+  "author": {
+    "name": "Paul Buckley",
+    "email": "buckleypa@gmail.com"
+  },
+  "homepage": "https://github.com/buckleypaul/riglink",
+  "repository": "https://github.com/buckleypaul/riglink",
+  "license": "MIT",
+  "keywords": ["riglink", "firmware", "testing", "zephyr", "serial", "pytest"]
+}

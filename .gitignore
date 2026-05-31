@@ -1,0 +1,13 @@
+build/
+build-*/
+*.pyc
+__pycache__/
+.venv/
+*.egg-info/
+dist/
+python/build/
+twister-out/
+*.o
+*.elf
+.claude/
+docs/

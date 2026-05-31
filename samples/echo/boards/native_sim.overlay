@@ -1,0 +1,9 @@
+/ {
+    chosen {
+        /* keep zephyr,console on the default native uart; riglink uses uart1 */
+    };
+};
+
+&uart1 {
+    status = "okay";
+};

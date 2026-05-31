@@ -1,0 +1,9 @@
+sample:
+  name: riglink echo (shell backend)
+tests:
+  sample.riglink.echo_shell:
+    platform_allow:
+      - native_sim
+      - nrf52dk/nrf52832
+    tags: riglink
+    build_only: true
