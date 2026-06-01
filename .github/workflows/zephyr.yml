@@ -1,5 +1,7 @@
 name: Zephyr
 on:
+  push:
+    branches: [main]
   pull_request:
   workflow_dispatch:
 permissions:
@@ -38,4 +40,7 @@ jobs:
       - name: Run integration tests against native_sim (echo + echo_shell)
         run: |
           cd python && pip install -e . && cd ..
+          # The action-zephyr-setup image's bundled pytest is missing its
+          # pygments dependency, so the test session can't start without it.
+          python -m pip install pygments
           python -m pytest tests/integration -q

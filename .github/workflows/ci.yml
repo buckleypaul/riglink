@@ -9,18 +9,53 @@ permissions:
 jobs:
   native-tests:
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # Exercise the optional feature macros, not just the Makefile default.
+        # The native tests #ifdef the mem-access cases, so mem-access-off is a
+        # real test run (fewer tests), not just a build. JCON_ENABLE_FLOAT must
+        # stay on: test_io's float case is not float-guarded (see minimal-build
+        # below, which only compiles — it does not run — the no-float config).
+        config:
+          - name: default
+            defs: "-DJCON_ENABLE_FLOAT -DRIGLINK_MEM_ACCESS"
+          - name: no-mem-access
+            defs: "-DJCON_ENABLE_FLOAT"
+    name: native-tests (${{ matrix.config.name }})
     steps:
       - uses: actions/checkout@v4
         with: { submodules: recursive }
       - name: Build & run native firmware tests
-        run: make test
-  python-tests:
+        run: make test DEFS="${{ matrix.config.defs }}"
+  native-minimal-build:
+    # Build gate: the library must compile with all optional features off, even
+    # though the test suite can't run there (test_io's float case is unguarded).
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
         with: { submodules: recursive }
+      - name: Compile library with no feature macros (syntax-only)
+        run: |
+          for s in src/*.c third_party/jcon/src/jcon.c; do
+            echo "syntax-only (minimal config): $s"
+            cc -std=c11 -Wall -Wextra -Wpedantic \
+               -Iinclude -Ithird_party/jcon/include -fsyntax-only "$s"
+          done
+          echo "Library compiles with all optional features off."
+  python-tests:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # pyproject declares requires-python = ">=3.10"; test the whole range.
+        python-version: ["3.10", "3.11", "3.12", "3.13"]
+    name: python-tests (py${{ matrix.python-version }})
+    steps:
+      - uses: actions/checkout@v4
+        with: { submodules: recursive }
       - uses: actions/setup-python@v5
-        with: { python-version: "3.12" }
+        with: { python-version: "${{ matrix.python-version }}" }
       - name: Install & test
         run: |
           cd python
