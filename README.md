@@ -244,7 +244,7 @@ python -m pytest ../tests/integration -q --riglink-port /dev/ttyACM0
 | `CONFIG_RIGLINK` | n | Enable riglink (also selects `JCON`) |
 | `CONFIG_RIGLINK_LINE_BUF_SIZE` | 128 | Max command line length (bytes) |
 | `CONFIG_RIGLINK_MAX_ARGS` | 8 | Max arguments per command / `RIG_EXPOSE` |
-| `CONFIG_RIGLINK_SCRATCH_SIZE` | 128 | Scratch buffer for string args (bytes) |
+| `CONFIG_RIGLINK_SCRATCH_SIZE` | 128 | JSON-escaping buffer for emitted strings (`rig_emit_str`); longer values are truncated with `...` |
 | `CONFIG_RIGLINK_EVENT_QUEUE_DEPTH` | 8 | ISR-deferred event ring depth |
 | `CONFIG_RIGLINK_EXTRA_FIELDS_MAX` | 16 | Max `rig_emit()` calls buffered per `RIG_FN` body |
 | `CONFIG_RIGLINK_EXTRA_FIELDS_CAP` | 512 | Byte arena for those buffered fields' name/value strings |
@@ -276,6 +276,11 @@ CONFIG_UART_CONSOLE=n
 # whether logs even route to this UART is board-specific.
 CONFIG_LOG_BACKEND_UART=n
 ```
+
+**Every new board target must set `CONFIG_LOG_BACKEND_UART=n` in its
+`boards/<board>.conf`** (or otherwise keep the log backend off the riglink
+UART) — omitting it risks the mid-frame corruption above the moment anything
+logs.
 
 Logging can stay compiled in (`CONFIG_LOG=y`); it's harmless on the wire as long
 as no *backend* targets that UART. If you need firmware-side logs during

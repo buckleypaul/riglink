@@ -127,6 +127,10 @@ def test_shell_echo_str_with_quotes(shell_dev):
     # contract only promises round-tripping for the escapes the host emits.)
     s = 'a b "c" d'
     assert shell_dev.echo_str(s) == {"ret": None, "echo": s, "len": len(s.encode())}
+    # A value that is itself entirely quote-looking exercises a different
+    # tokenizer quoting boundary (leading/trailing double-quotes in the content).
+    q = '"quoted"'
+    assert shell_dev.echo_str(q) == {"ret": None, "echo": q, "len": len(q.encode())}
 
 
 def test_shell_hash_str_non_trivial_handler(shell_dev):
@@ -139,15 +143,19 @@ def test_shell_hash_str_non_trivial_handler(shell_dev):
 
 
 def test_shell_wrong_argcount_is_clean_error(shell_dev):
-    # Failure mode (a): garbage / wrong parameter count to a KNOWN command. The
-    # host-side proxy would reject this before sending, so use call_raw() to put
-    # the firmware-side precheck under test. A known command reaches
-    # rig_dispatch -> the trampoline's argc check -> an `arg_count` error
-    # envelope (RiglinkProtocolError), unlike an unknown command (which the
-    # shell rejects with a timeout). Either way the link must stay clean.
+    # Failure mode (a): garbage / wrong parameter count to a KNOWN command. We go
+    # through `_send` (not the typed `shell_dev.echo_str(...)` proxy) on purpose:
+    # the proxy guards arg arity client-side from the rig.list signature and
+    # would raise before anything hit the wire (see the next test), whereas
+    # `_send` encodes the tokens straight onto the wire — the same path the
+    # unknown-command test uses. That puts the FIRMWARE-side check under test: a
+    # known command reaches rig_dispatch -> the trampoline's argc check -> an
+    # `arg_count` error envelope (RiglinkProtocolError), unlike an unknown
+    # command (which Zephyr's shell rejects with a timeout). Either way the link
+    # must stay clean.
     shell_dev.clear_buffers()
     with pytest.raises(RiglinkProtocolError) as ei:
-        shell_dev.call_raw("echo_str", "a", "b", "c", timeout=1.0)  # expects 1 arg
+        shell_dev._send("echo_str", ["a", "b", "c"], 1.0)  # echo_str expects 1 arg
     assert ei.value.code == "arg_count", ei.value.code
     # No torn sentinel line, and the link still works afterwards.
     assert [c for c in shell_dev.console if c.startswith("<malformed:")] == []
