@@ -375,6 +375,33 @@ The host counterpart is `connect(..., shell_root="rig")` (§3.3): the poll backe
 needs nothing. `samples/echo_shell` mirrors `samples/echo`'s exposed surface, and
 the integration suite (`tests/integration/`) drives both over `native_sim`.
 
+#### Give riglink exclusive use of its UART
+
+riglink's framing assumes it is the **only** writer on the wire. The 0x1e/`RIG `
+sentinel lets the host *recover* from interleaved console chatter (a line that
+doesn't start with the sentinel is filed as `console`/`malformed`, not parsed),
+but a writer that interrupts a response **mid-line** splices bytes into a
+sentinel line and corrupts it — the host then sees a `<malformed:…>` entry and a
+dropped reply. This is not theoretical: on a real DK an async (deferred) log
+flush interleaved with a response and tore the frame; switching the log backend
+off that UART fixed it. So whatever UART carries the JSON frames must have no
+other backend pointed at it:
+
+| Symbol | Set to | Why |
+|--------|--------|-----|
+| `CONFIG_UART_CONSOLE` | `n` | Keep `printk()` / the console driver off the UART; otherwise a stray `printk()` or boot banner lands between (or inside) JSON lines. |
+| `CONFIG_LOG_BACKEND_UART` | `n` | Keep the (deferred) log backend off the UART — the splice seen on hardware. Set this per board (`boards/*.conf`), since whether logs even route to this UART is board-specific. |
+| `CONFIG_SHELL_PROMPT_UART` / `CONFIG_SHELL_VT100_COMMANDS` / `CONFIG_SHELL_ECHO_STATUS` | `""` / `n` / `n` | Stop the shell itself from injecting a prompt, ANSI escapes, or echo into the stream (already required for the shell backend). |
+
+Logging can stay compiled in (`CONFIG_LOG=y`) — it's harmless on the wire as long
+as no *backend* targets that UART. If you need firmware-side logs during bring-up,
+route them off-wire (`CONFIG_LOG_BACKEND_RTT=y`) rather than re-enabling the UART
+backend, or accept `CONFIG_LOG_BACKEND_SHELL=y` (logs are then serialised against
+responses on the shell thread instead of racing them). The poll backend
+(`samples/echo`) has the same requirement — it just owns the UART through
+`rig_putc`/`rig_getc` rather than through the shell. See
+`samples/echo_shell/prj.conf` and `boards/*.conf` for the concrete snippet.
+
 ---
 
 ## 3. Host side (Python library)
