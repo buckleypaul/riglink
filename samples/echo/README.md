@@ -1,8 +1,20 @@
 # samples/echo — riglink echo sample
 
-A minimal Zephyr application that demonstrates **riglink**: it implements the
-three application shims (`rig_putc`, `rig_getc`, `rig_reset`), exposes a small
-surface of functions and a variable, and fires a periodic ISR event.
+A minimal Zephyr application that demonstrates the **poll backend**: it
+implements the three application shims (`rig_putc`, `rig_getc`, `rig_reset`),
+exposes a small surface of functions and a variable, and fires a periodic ISR
+event.
+
+> **Hardware note.** This sample's hand-rolled `rig_getc()` uses
+> `uart_poll_in()`, which is fine on `native_sim` but **drops RX bytes above
+> ~9600 baud on real hardware**. On a board, prefer the shell backend
+> (`samples/echo_shell`), or build this sample with `-DCONFIG_RIGLINK_UART_IRQ_RX=y`
+> to use the library's reference interrupt-driven shim instead — when that option
+> is on, the sample's `rig_putc`/`rig_getc` are compiled out and the library
+> provides safe, non-dropping versions (RX into a ring buffer from the UART ISR).
+> The `zephyr,riglink-uart` chosen node selects the UART (this sample's
+> `native_sim.overlay` points it at `uart1`; on a board it falls back to
+> `zephyr,console`). See ARCHITECTURE.md §2.10.
 
 ## Exposed surface
 

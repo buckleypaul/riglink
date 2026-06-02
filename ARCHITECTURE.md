@@ -109,7 +109,10 @@ void rig_reset(void);    /* device-defined reset; rig.reset invokes it (typicall
 They are declared in `riglink.h` so the implementation gets a signature check;
 `riglink_io.c` adapts `rig_putc` onto jcon's `(void *ctx, char)` putc signature.
 On Zephyr these typically wrap `uart_poll_out` / `uart_poll_in` / `sys_reboot`
-(see `samples/echo/src/main.c`).
+(see `samples/echo/src/main.c`) — but note that `uart_poll_in()`-fed `rig_getc()`
+drops RX bytes above trivial baud on real hardware; see §2.10 for the shell
+backend and the `CONFIG_RIGLINK_UART_IRQ_RX` interrupt-driven shim, which provide
+these two shims safely so the application doesn't hand-roll them.
 
 ### 2.2 How functions are exposed via macros
 
@@ -338,9 +341,38 @@ build always minifies and never compiles in mem-access.
 
 Everything above describes the **poll backend**: the application owns `rig_putc`/
 `rig_getc` and drives `rig_run()` (or `CONFIG_RIGLINK_THREAD=y` does). riglink's
-own line assembly, tokenizer, and pump are the frontend.
+own line assembly, tokenizer, and pump are the frontend. Treat it as the
+**minimal / bare-metal fallback** — it is the only option on non-Zephyr targets
+and the lightest on Zephyr, but on real hardware it puts the burden of a
+non-dropping RX path on the application.
 
-`CONFIG_RIGLINK_BACKEND_SHELL=y` (`zephyr/shell_backend.c`) swaps that whole
+**On Zephyr hardware the shell backend (below) is the recommended default.** It
+hands the UART to Zephyr's shell, which already does IRQ-driven RX, line
+assembly, and log multiplexing — the things the poll backend leaves to you.
+(This repo previously shipped hand-rolled poll-backend UART code in the samples;
+that was deleted in favour of the shell backend for the hardware path.)
+
+> **The `uart_poll_in()` trap (poll backend).** The obvious poll-backend
+> `rig_getc()` over `uart_poll_in()` **drops RX bytes above ~9600 baud**:
+> `uart_poll_in()` returns only whatever is in the UART RX register at the instant
+> of the call, and the pump polls only between other work, so at 115200 baud
+> (a byte every ~87 us) bytes are overwritten before `rig_run()` comes back.
+> Symptom: truncated command lines and host-side timeouts. It is safe on
+> `native_sim` (the only place the samples use it). On a board, either use the
+> shell backend, or set **`CONFIG_RIGLINK_UART_IRQ_RX=y`** — a reference
+> interrupt-driven UART shim (`zephyr/uart_irq_rx.c`) that *provides* `rig_putc`/
+> `rig_getc` for you. Its ISR drains `uart_fifo_read()` into a `RING_BUF_DECLARE`
+> ring that `rig_getc()` pops one byte at a time, so RX cannot be lost (up to a
+> ring overflow, sized by `CONFIG_RIGLINK_UART_IRQ_RX_BUF_SIZE`, default 256). The
+> UART is the `zephyr,riglink-uart` chosen node, falling back to `zephyr,console`.
+> A `SYS_INIT` (`APPLICATION` prio) sets the IRQ callback and enables RX. The
+> application keeps calling `rig_init()`/`rig_run()` as usual and must **not**
+> define `rig_putc`/`rig_getc` itself. The option is **off by default** so the
+> minimal poll path (and existing builds) stay untouched; it depends on
+> `!RIGLINK_BACKEND_SHELL` (the shell backend owns the UART, so the two are
+> mutually exclusive) and `select`s `UART_INTERRUPT_DRIVEN` + `RING_BUFFER`.
+
+`CONFIG_RIGLINK_BACKEND_SHELL=y` (`zephyr/shell_backend.c`) swaps the whole poll
 frontend for Zephyr's shell. With it the application implements **no** `rig_putc`/
 `rig_getc` and never calls `rig_init()`/`rig_run()`; a `SYS_INIT` (`APPLICATION`
 prio) brings riglink up and starts a `k_work_delayable`. The differences that

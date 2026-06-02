@@ -16,9 +16,15 @@
 #endif
 static const struct device *const rig_uart = DEVICE_DT_GET(RIG_UART_NODE);
 
+#if !defined(CONFIG_RIGLINK_UART_IRQ_RX)
+/* Hand-rolled poll-backend shims. NOTE: uart_poll_in() drops RX bytes above
+ * trivial baud rates on real hardware — fine for native_sim, but on a board set
+ * CONFIG_RIGLINK_UART_IRQ_RX=y to get the library's interrupt-driven shim (or
+ * use the shell backend). See ARCHITECTURE.md §2.10. */
 int rig_putc(char c) { uart_poll_out(rig_uart, (unsigned char)c); return 0; }
 int rig_getc(void) { unsigned char c; return uart_poll_in(rig_uart, &c) == 0 ? (int)c : -1; }
 void rig_reset(void) { sys_reboot(SYS_REBOOT_COLD); }
+#endif /* !CONFIG_RIGLINK_UART_IRQ_RX */
 
 /* --- exposed surface --- */
 static int add(int a, int b) { return a + b; }

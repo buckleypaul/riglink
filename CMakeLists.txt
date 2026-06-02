@@ -13,6 +13,9 @@ if(DEFINED ZEPHYR_BASE OR DEFINED CONFIG_RIGLINK)
     zephyr_library_sources_ifdef(CONFIG_RIGLINK_BACKEND_SHELL
       zephyr/shell_backend.c
     )
+    zephyr_library_sources_ifdef(CONFIG_RIGLINK_UART_IRQ_RX
+      zephyr/uart_irq_rx.c
+    )
     zephyr_include_directories(include)
   endif()
 else()
