@@ -24,6 +24,12 @@ static const struct device *const rig_uart = DEVICE_DT_GET(RIG_UART_NODE);
 int rig_putc(char c) { uart_poll_out(rig_uart, (unsigned char)c); return 0; }
 int rig_getc(void) { unsigned char c; return uart_poll_in(rig_uart, &c) == 0 ? (int)c : -1; }
 void rig_reset(void) { sys_reboot(SYS_REBOOT_COLD); }
+#else
+/* With CONFIG_RIGLINK_UART_IRQ_RX=y the library's zephyr/uart_irq_rx.c provides
+ * rig_putc / rig_getc (interrupt-driven RX into a ring buffer), so this sample
+ * must NOT define them. rig_reset is also provided there as a __weak
+ * sys_reboot(SYS_REBOOT_COLD); define a strong rig_reset() here to override it
+ * if your board needs custom reset behaviour. */
 #endif /* !CONFIG_RIGLINK_UART_IRQ_RX */
 
 /* --- exposed surface --- */

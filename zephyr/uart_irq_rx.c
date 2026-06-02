@@ -39,7 +39,7 @@
 #include <zephyr/kernel.h>
 #include <zephyr/device.h>
 #include <zephyr/drivers/uart.h>
-#include <zephyr/sys/reboot.h>
+#include <zephyr/sys/reboot.h>   /* sys_reboot(), for the __weak rig_reset below */
 #include <zephyr/sys/ring_buffer.h>
 
 #include <errno.h>
@@ -76,8 +76,8 @@ static void rig_uart_isr(const struct device *dev, void *user_data)
 		}
 		/* Best-effort: if the ring is full we drop the overflow bytes
 		 * here rather than block in the ISR. Size
-		 * RIGLINK_UART_IRQ_RX_BUF_SIZE for your longest command line
-		 * plus pump latency to avoid this. */
+		 * CONFIG_RIGLINK_UART_IRQ_RX_BUF_SIZE for your longest command
+		 * line plus pump latency to avoid this. */
 		(void)ring_buf_put(&rig_rx_ring, buf, (uint32_t)n);
 	}
 }

@@ -109,6 +109,7 @@ config RIGLINK_UART_IRQ_RX
 	select SERIAL
 	select UART_INTERRUPT_DRIVEN
 	select RING_BUFFER
+	select REBOOT
 	help
 	  Provide a ready-made rig_putc / rig_getc pair for the poll backend
 	  (zephyr/uart_irq_rx.c): RX is interrupt-driven into a ring buffer that
@@ -141,6 +142,7 @@ config RIGLINK_BACKEND_SHELL
 	default n
 	select SHELL
 	select SHELL_BACKEND_SERIAL
+	select REBOOT
 	help
 	  Bridge riglink to Zephyr's shell: commands are registered as
 	  subcommands of a root "rig" command, the shell thread does line

@@ -288,6 +288,10 @@ python -m pytest ../tests/integration -q --riglink-port /dev/ttyACM0
 | `CONFIG_RIGLINK_THREAD` | n | Spawn a dedicated thread for `rig_run()` |
 | `CONFIG_RIGLINK_THREAD_STACK_SIZE` | 2048 | Thread stack size |
 | `CONFIG_RIGLINK_THREAD_PRIO` | 5 | Thread priority |
+| `CONFIG_RIGLINK_UART_IRQ_RX` | n | Poll backend: use the reference interrupt-driven UART shim (provides `rig_putc`/`rig_getc`; no dropped RX bytes). Excludes the shell backend |
+| `CONFIG_RIGLINK_UART_IRQ_RX_BUF_SIZE` | 256 | RX ring buffer size (bytes) for that shim |
+| `CONFIG_RIGLINK_BACKEND_SHELL` | n | Dispatch commands via Zephyr's shell (recommended on hardware; owns the UART, no `rig_putc`/`rig_getc`/`rig_run()`) |
+| `CONFIG_RIGLINK_SHELL_EVENT_POLL_MS` | 10 | Shell backend: event-ring drain period (ms) |
 
 ---
 
