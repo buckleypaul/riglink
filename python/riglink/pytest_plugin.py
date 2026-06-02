@@ -32,7 +32,7 @@ reset-scope handling and the transcript-on-failure hook:
             from riglink.native_sim import NativeSim
             ns = NativeSim.build_and_launch("samples/echo")
             yield ns.pty
-            ns.teardown()
+            ns.teardown()   # stops the process + removes the auto-built dir
 
   * ``riglink_devices_factory`` — for full control, return a ``{port: Device}``
     mapping (or ``None`` to fall back).  The plugin applies reset-scope, buffer
@@ -96,8 +96,8 @@ def _shell_root(config, default=None):
 
     Resolution order: --riglink-shell-root flag → riglink_shell_root ini →
     the ``default`` supplied by the ``riglink_default_shell_root`` fixture →
-    None (poll backend). Both the flag and the ini sentinel-default to "", so an
-    unset value falls through to ``default``."""
+    None (poll backend). An unset flag is ``None`` and the ini defaults to ""; a
+    value matching either is treated as "not set" and falls through."""
     val = getattr(config.option, "riglink_shell_root", None)
     if val in (None, ""):
         val = config.getini("riglink_shell_root")
@@ -193,8 +193,21 @@ def riglink_session(request, riglink_default_port, riglink_devices_factory,
             raise
 
     if _reset_scope(request.config) == "session":
-        for d in devices.values():
-            d.reset()
+        try:
+            for d in devices.values():
+                d.reset()
+        except Exception:
+            # Leave no half-reset session behind. Owned devices we close; for
+            # factory-supplied devices the consumer owns teardown, but we still
+            # re-raise so the failure surfaces rather than running on an
+            # indeterminate device set.
+            if owned:
+                for d in devices.values():
+                    try:
+                        d.close()
+                    except Exception:
+                        pass
+            raise
     yield devices
     if owned:
         for d in devices.values():

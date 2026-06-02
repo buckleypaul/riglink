@@ -5,7 +5,7 @@ import textwrap
 # The sub-pytest runs in a temp dir; riglink is installed editable so its __file__
 # points into the real python/ tree — we climb up to python/ and add it to sys.path.
 _FAKEDEV_PREAMBLE = textwrap.dedent("""
-    import sys, pathlib
+    import sys, pathlib, riglink
     _python_dir = pathlib.Path(riglink.__file__).parent.parent
     if str(_python_dir) not in sys.path:
         sys.path.insert(0, str(_python_dir))
@@ -177,6 +177,7 @@ _FACTORY_PREAMBLE = textwrap.dedent("""
         fd.command("add2", "int", ["int", "int"])(lambda a, b: int(a) + int(b))
         d = riglink.Device(fd.transport)
         d._handshake()
+        d._fakedev = fd   # expose reset_count so tests can assert reset-scope
         return d
 """)
 
@@ -213,13 +214,14 @@ def test_factory_hook_keeps_reset_scope(pytester):
                 return {"native_sim": _make_device()}
         """)
     )
-    # FakeDevice exposes reset_count via rig.reset; the plugin resets per
-    # function by default, so two tests => the device is reset before each.
+    # FakeDevice counts rig.reset calls in reset_count. The plugin resets per
+    # function by default, so the count must equal the test ordinal (1 before
+    # test_a, 2 before test_b) — proving the injected device gets reset-scope.
     pytester.makepyfile(test_x="""
         def test_a(dev):
-            assert dev.add2(1, 1) == {"ret": 2}
+            assert dev._fakedev.reset_count == 1
         def test_b(dev):
-            assert dev.add2(1, 1) == {"ret": 2}
+            assert dev._fakedev.reset_count == 2
     """)
     result = pytester.runpytest("-q", "-p", "no:cacheprovider")
     result.assert_outcomes(passed=2)

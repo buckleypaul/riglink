@@ -143,7 +143,8 @@ def launch_and_get_pty(
             pty_paths.append(m.group(1))
             last_pty_at = time.monotonic()
     if not pty_paths:
-        proc.terminate()
+        if proc.poll() is None:
+            proc.terminate()
         output = "".join(lines[-20:])
         raise NativeSimError(
             f"native_sim sample did not report a pseudotty path\n{output}"
@@ -183,6 +184,9 @@ class NativeSim:
         self._proc: subprocess.Popen | None = None
         self._dev: riglink.Device | None = None
         self._pty: str | None = None
+        # Set by build_and_launch when it auto-creates a tempdir, so teardown()
+        # can clean it up. A caller-supplied build_dir is left untouched.
+        self._owned_build_dir: str | None = None
         self._launch()
 
     @classmethod
@@ -199,29 +203,57 @@ class NativeSim:
     ) -> "NativeSim":
         """Build ``sample`` and launch it. ``build_dir`` defaults to a tempdir.
 
-        The caller is responsible for :meth:`teardown`; the temp build dir is
-        left in place (callers that created their own ``build_dir`` clean it up
-        themselves)."""
+        The caller is responsible for :meth:`teardown`, which cleans up an
+        auto-created tempdir. A caller-supplied ``build_dir`` is left in place
+        for the caller to manage."""
+        owned_build_dir = None
         if build_dir is None:
             import tempfile
             build_dir = tempfile.mkdtemp(prefix="riglink-native-sim-")
-        exe = build_native_sim(
-            sample, build_dir, repo_root=repo_root, board=board
-        )
-        return cls(exe, baud, shell_root=shell_root, uart_index=uart_index)
+            owned_build_dir = build_dir
+        try:
+            exe = build_native_sim(
+                sample, build_dir, repo_root=repo_root, board=board
+            )
+            ns = cls(exe, baud, shell_root=shell_root, uart_index=uart_index)
+        except Exception:
+            if owned_build_dir is not None:
+                shutil.rmtree(owned_build_dir, ignore_errors=True)
+            raise
+        ns._owned_build_dir = owned_build_dir
+        return ns
 
     def _launch(self) -> None:
         proc, pty = launch_and_get_pty(self._exe, uart_index=self._uart_index)
+        # Claim the process immediately so teardown()/ensure_alive() can always
+        # reap it, even if connect() below raises (port open / handshake fail).
+        self._proc = proc
+        self._pty = pty
         # native_sim PTYs need a brief settle before opening
         if self._settle:
             time.sleep(self._settle)
-        dev = riglink.connect(
-            pty, self._baud, timeout=self._timeout,
-            ready_timeout=self._ready_timeout, shell_root=self._shell_root,
-        )
-        self._proc = proc
+        try:
+            dev = riglink.connect(
+                pty, self._baud, timeout=self._timeout,
+                ready_timeout=self._ready_timeout, shell_root=self._shell_root,
+            )
+        except Exception:
+            self._terminate_proc()
+            raise
         self._dev = dev
-        self._pty = pty
+
+    def _terminate_proc(self) -> None:
+        """Terminate (then kill on timeout) and reap the launched process."""
+        if self._proc is None:
+            return
+        if self._proc.poll() is None:
+            self._proc.terminate()
+        try:
+            self._proc.wait(timeout=2.0)
+        except subprocess.TimeoutExpired:
+            self._proc.kill()
+            self._proc.wait()
+        self._proc = None
 
     @property
     def dev(self) -> riglink.Device:
@@ -252,7 +284,10 @@ class NativeSim:
             try:
                 self._proc.wait(timeout=2.0)
             except subprocess.TimeoutExpired:
-                pass
+                # Force the exit so ensure_alive() reliably sees a dead process
+                # and relaunches, rather than early-returning on a stale device.
+                self._proc.kill()
+                self._proc.wait()
         self.ensure_alive()
 
     def ensure_alive(self) -> None:
@@ -265,26 +300,20 @@ class NativeSim:
             except Exception:
                 pass
             self._dev = None
-        if self._proc is not None:
-            try:
-                self._proc.wait(timeout=2.0)
-            except subprocess.TimeoutExpired:
-                self._proc.kill()
-            self._proc = None
+        # The process has already exited here; reap it (terminate is a no-op).
+        self._terminate_proc()
         self._launch()
 
     def teardown(self) -> None:
-        """Close the device and terminate the process (session teardown)."""
+        """Close the device, terminate the process, and clean up any auto-created
+        build dir (session teardown)."""
         if self._dev is not None:
             try:
                 self._dev.close()
             except Exception:
                 pass
             self._dev = None
-        if self._proc is not None:
-            self._proc.terminate()
-            try:
-                self._proc.wait(timeout=2.0)
-            except subprocess.TimeoutExpired:
-                self._proc.kill()
-            self._proc = None
+        self._terminate_proc()
+        if self._owned_build_dir is not None:
+            shutil.rmtree(self._owned_build_dir, ignore_errors=True)
+            self._owned_build_dir = None
