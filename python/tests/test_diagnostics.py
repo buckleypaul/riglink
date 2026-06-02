@@ -6,6 +6,7 @@ import warnings
 import pytest
 import riglink
 from riglink._wire import DEFAULT_SENTINEL
+from riglink.device import RECENT_LINES_CAP
 from riglink.exceptions import RiglinkTimeout
 from riglink.transport import LoopbackTransport
 
@@ -69,8 +70,8 @@ def test_timeout_caps_attached_lines():
         with pytest.raises(RiglinkTimeout) as ei:
             dev._send("add", [1, 2], 0.3)
         exc = ei.value
-        # Capped to a sane N — not the full 200 lines.
-        assert len(exc.recent_console) <= 50
+        # Capped to RECENT_LINES_CAP — not the full 200 lines.
+        assert len(exc.recent_console) <= RECENT_LINES_CAP
         # The most recent lines are the ones kept.
         assert any("noise line 199" in line for line in exc.recent_console)
     finally:

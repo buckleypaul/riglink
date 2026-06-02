@@ -1,5 +1,5 @@
 import pytest
-from riglink.exceptions import RiglinkAssertError
+from riglink.exceptions import RiglinkAssertError, RiglinkProtocolError
 
 
 def test_handshake_lists_expected_commands(dev):
@@ -52,6 +52,5 @@ def test_unknown_command_raises(dev):
     # subcommand before rig_dispatch, so the root handler frames the error
     # instead of letting a plain-text shell message escape unparsed). See
     # test_echo_shell.test_shell_unknown_command_returns_framed_error.
-    from riglink.exceptions import RiglinkProtocolError
     with pytest.raises(RiglinkProtocolError):
         dev._send("no_such_command", [], 1.0)

@@ -80,6 +80,12 @@ class Device:
         # "framing got corrupted" signal — see the diagnostics property.
         self._counts = {"response": 0, "event": 0, "log": 0,
                         "console": 0, "malformed": 0}
+        # Guards the diagnostic buffers (_logs, _console, _counts) against the
+        # reader thread: the reader appends/increments while _timeout_error,
+        # .diagnostics and clear_buffers() read/reset. Without it the snapshot
+        # races the very concurrency this feature exists to diagnose (and the
+        # list/dict ops aren't atomic on PyPy).
+        self._buf_lock = threading.Lock()
         self._call_lock = threading.Lock()
         self._signatures: dict[str, dict] = {}
         self._attr_map: dict[str, Optional[str]] = {}   # attr name -> command name (None if ambiguous)
@@ -106,7 +112,19 @@ class Device:
             while b"\n" in self._buf:
                 line, self._buf = self._buf.split(b"\n", 1)
                 kind, payload = classify(line, self._sentinel)
-                self._counts[kind] = self._counts.get(kind, 0) + 1
+                # _buf_lock covers the diagnostic buffers (_counts/_logs/_console)
+                # so _timeout_error / .diagnostics see a consistent snapshot. It
+                # is NOT held across _pending.put or the _evcond block (those have
+                # their own synchronization) to keep the critical section tight.
+                with self._buf_lock:
+                    self._counts[kind] = self._counts.get(kind, 0) + 1
+                    if kind == "log":
+                        self._logs.append(payload)
+                    elif kind == "console":
+                        if payload:
+                            self._console.append(payload)
+                    elif kind == "malformed":
+                        self._console.append(f"<malformed: {payload}>")
                 if kind == "response":
                     self._transcript.append(("recv", repr(payload)))
                     self._pending.put(payload)
@@ -117,24 +135,22 @@ class Device:
                         self._evcond.notify_all()
                 elif kind == "log":
                     self._transcript.append(("recv", f"log: {payload}"))
-                    self._logs.append(payload)
-                elif kind == "console":
-                    if payload:
-                        self._console.append(payload)
-                else:  # malformed
-                    self._console.append(f"<malformed: {payload}>")
+                elif kind == "malformed":
                     # A malformed sentinel line means the framing was corrupted
                     # (splice, dropped bytes). Surface it immediately — a later
                     # timeout would otherwise be the only, opaque, symptom.
+                    # stacklevel=1: we're in the reader thread, so a higher level
+                    # would point at the thread machinery, not user code.
                     warnings.warn(
                         f"riglink: malformed device line (framing corrupted?): {payload!r}",
-                        RuntimeWarning, stacklevel=2,
+                        RuntimeWarning, stacklevel=1,
                     )
                 if self._on_line is not None:
                     try:
                         self._on_line(kind, payload)
                     except Exception as e:
-                        self._console.append(f"<on_line callback error: {e!r}>")
+                        with self._buf_lock:
+                            self._console.append(f"<on_line callback error: {e!r}>")
 
     # -- calls ---------------------------------------------------------
     def _interpret(self, resp: dict) -> dict:
@@ -192,13 +208,14 @@ class Device:
         count turns a multi-probe investigation into a one-line diagnosis — e.g.
         a shell ``<cmd>: wrong parameter count`` line shows up right in the error.
         """
-        return RiglinkTimeout(
-            message,
-            recent_console=list(self._console)[-RECENT_LINES_CAP:],
-            recent_logs=list(self._logs)[-RECENT_LINES_CAP:],
-            malformed_count=self._counts.get("malformed", 0),
-            console_count=self._counts.get("console", 0),
-        )
+        with self._buf_lock:
+            return RiglinkTimeout(
+                message,
+                recent_console=self._console[-RECENT_LINES_CAP:],
+                recent_logs=self._logs[-RECENT_LINES_CAP:],
+                malformed_count=self._counts.get("malformed", 0),
+                console_count=self._counts.get("console", 0),
+            )
 
     def _wire_name(self, name: str) -> str:
         """Map a canonical command name to the token(s) the device's frontend
@@ -318,11 +335,13 @@ class Device:
 
     @property
     def logs(self) -> list[str]:
-        return list(self._logs)
+        with self._buf_lock:
+            return list(self._logs)
 
     @property
     def console(self) -> list[str]:
-        return list(self._console)
+        with self._buf_lock:
+            return list(self._console)
 
     @property
     def diagnostics(self) -> dict[str, int]:
@@ -333,7 +352,8 @@ class Device:
         ``console`` lines, points at corrupted framing rather than a slow or
         crashed command. Counts are cumulative; ``clear_buffers()`` resets them.
         """
-        return dict(self._counts)
+        with self._buf_lock:
+            return dict(self._counts)
 
     @property
     def command_names(self) -> list[str]:
@@ -354,11 +374,12 @@ class Device:
     def clear_buffers(self) -> None:
         with self._evcond:
             self._events.clear()
-        self._logs.clear()
-        self._console.clear()
+        with self._buf_lock:
+            self._logs.clear()
+            self._console.clear()
+            for k in self._counts:
+                self._counts[k] = 0
         self._transcript.clear()
-        for k in self._counts:
-            self._counts[k] = 0
 
     # -- convenience wrappers for built-ins ---------------------------
     # These unwrap ["ret"]; the dynamic attribute API and call_raw() don't.
