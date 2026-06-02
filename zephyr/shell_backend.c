@@ -89,6 +89,14 @@ static void rig_dyn_get(size_t idx, struct shell_static_entry *entry)
 	/* help is unused (CONFIG_SHELL_HELP=n in the sample); avoid wiring
 	 * c->ret here since it's a return-type string, not help text. */
 	entry->help    = NULL;
+	/* z_shell_cmd_get() hands the getter an uninitialised stack
+	 * shell_static_entry, so args.mandatory may be garbage. A non-zero
+	 * mandatory makes the shell run its own argc range check and reject the
+	 * command ("wrong parameter count") before our handler runs. Zero it so
+	 * the shell skips that check and rig_dispatch() does the arg validation.
+	 */
+	entry->args.mandatory = 0;
+	entry->args.optional  = 0;
 }
 
 SHELL_DYNAMIC_CMD_CREATE(rig_subcmds, rig_dyn_get);

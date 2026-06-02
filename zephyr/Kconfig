@@ -98,6 +98,12 @@ config RIGLINK_THREAD_STACK_SIZE
 	  8 * RIG_STR_ARG_SIZE bytes of argument buffers on the stack, on top of
 	  the user function's own frame, so give this thread some headroom.
 
+	  The same stack cost applies to RIGLINK_BACKEND_SHELL, where commands
+	  run on the shell thread (CONFIG_SHELL_STACK_SIZE, ~2K by default) rather
+	  than this one. A command that calls into a heavy library on top of the
+	  trampoline can overflow it, with the same silent failure mode (no
+	  response -> host timeout). Size CONFIG_SHELL_STACK_SIZE accordingly.
+
 config RIGLINK_THREAD_PRIO
 	int "riglink thread priority"
 	default 5
@@ -119,6 +125,16 @@ config RIGLINK_BACKEND_SHELL
 	  Set CONFIG_SHELL_PROMPT_UART="", CONFIG_SHELL_VT100_COMMANDS=n,
 	  CONFIG_SHELL_ECHO_STATUS=n in your prj.conf so the shell does not
 	  inject prompts or escape sequences into the JSON stream.
+
+	  Command lines longer than CONFIG_SHELL_BACKEND_SERIAL_RX_RING_BUFFER_SIZE
+	  (default 64) overflow the shell's RX ring buffer and get corrupted
+	  mid-token: an argument arrives split, producing a spurious arg_count
+	  mismatch and a reply desynced by one command. If your commands take long
+	  string arguments, raise it (e.g. 256).
+
+	  Commands run on the shell thread, not main() — see
+	  CONFIG_SHELL_STACK_SIZE under RIGLINK_THREAD_STACK_SIZE for the
+	  str-argument trampoline's stack cost.
 
 config RIGLINK_SHELL_EVENT_POLL_MS
 	int "Period for draining the ISR-deferred event ring (ms)"
