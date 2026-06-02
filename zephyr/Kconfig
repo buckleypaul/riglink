@@ -98,6 +98,11 @@ config RIGLINK_THREAD_STACK_SIZE
 	  8 * RIG_STR_ARG_SIZE bytes of argument buffers on the stack, on top of
 	  the user function's own frame, so give this thread some headroom.
 
+	  The shell backend (RIGLINK_BACKEND_SHELL) pays the same trampoline cost
+	  but dispatches on the shell thread instead, so its stack is sized via
+	  SHELL_STACK_SIZE — which RIGLINK_BACKEND_SHELL defaults up to 4096 for
+	  the same reason — rather than here.
+
 config RIGLINK_THREAD_PRIO
 	int "riglink thread priority"
 	default 5
@@ -116,9 +121,14 @@ config RIGLINK_BACKEND_SHELL
 	  rig_getc and MUST NOT call rig_init() / rig_run() — the shim does
 	  all of that. Mutually exclusive with RIGLINK_THREAD.
 
-	  Set CONFIG_SHELL_PROMPT_UART="", CONFIG_SHELL_VT100_COMMANDS=n,
-	  CONFIG_SHELL_ECHO_STATUS=n in your prj.conf so the shell does not
-	  inject prompts or escape sequences into the JSON stream.
+	  This backend sets up the shell for machine-driven I/O automatically:
+	  the prompt is emptied (SHELL_PROMPT_UART=""), VT100 escapes and the
+	  echo-status byte are turned off, the serial RX ring is grown to match
+	  RIGLINK_LINE_BUF_SIZE, and the shell thread stack is defaulted up to
+	  4096 to cover the command trampoline (see RIGLINK_THREAD_STACK_SIZE).
+	  These are applied as Kconfig defaults (not forced selects), so a
+	  consumer can still override any of them with an explicit CONFIG_... in
+	  prj.conf.
 
 config RIGLINK_SHELL_EVENT_POLL_MS
 	int "Period for draining the ISR-deferred event ring (ms)"
@@ -128,5 +138,49 @@ config RIGLINK_SHELL_EVENT_POLL_MS
 	  With the shell backend, rig_run() is not called — its event-flush
 	  responsibility moves to a delayable k_work item that fires on this
 	  period. Lower means lower event latency at the cost of more wakeups.
+
+# Companion shell settings the backend needs for an uncorrupted JSON stream.
+# These use `configdefault` so they only change the *default* of upstream shell
+# symbols: a consumer can still override any of them with an explicit
+# CONFIG_... in prj.conf. (`select` would force them and silently undo such an
+# override; `imply` only nudges bools toward y, the wrong direction for the
+# escape/echo toggles below.)
+if RIGLINK_BACKEND_SHELL
+
+# Empty prompt: a non-empty SHELL_PROMPT_UART makes the shell emit the prompt
+# text plus two newlines at init, before the host has framed anything — those
+# bytes land ahead of the first 0x1e-tagged JSON line and the host parser
+# chokes on them.
+configdefault SHELL_PROMPT_UART
+	default ""
+
+# VT100 escapes and the input-echo byte both splice non-JSON bytes into the
+# stream; the host parser frames on the 0x1e sentinel and would choke on them.
+configdefault SHELL_VT100_COMMANDS
+	default n
+
+configdefault SHELL_ECHO_STATUS
+	default n
+
+# Upstream defaults the serial RX ring to 64 bytes, below RIGLINK_LINE_BUF_SIZE
+# (default 128). Without this, riglink advertises 128-byte line support but the
+# shell backend silently truncates input lines at 64. Track the line buffer.
+configdefault SHELL_BACKEND_SERIAL_RX_RING_BUFFER_SIZE
+	default RIGLINK_LINE_BUF_SIZE
+	# Belt-and-suspenders: standard Kconfiglib resolves the symbol reference
+	# above to RIGLINK_LINE_BUF_SIZE's value (128 by default), but a
+	# non-standard parser that fails to resolve it would fall through to this
+	# literal rather than to a zero-size RX ring.
+	default 128
+
+# The shell thread runs the command trampoline, which can put up to
+# 8 * RIG_STR_ARG_SIZE bytes of `str` argument buffers on the stack on top of
+# the user function's frame (same cost RIGLINK_THREAD_STACK_SIZE warns about).
+# Default it up from upstream's 2048 (3072 on 64-bit) to 4096 so there is
+# headroom on both width classes — the trampoline cost is width-independent.
+configdefault SHELL_STACK_SIZE
+	default 4096
+
+endif # RIGLINK_BACKEND_SHELL
 
 endif # RIGLINK
