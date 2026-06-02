@@ -353,11 +353,15 @@ matter:
   `rig.` on a miss. It then builds a `struct rig_tokens` and calls `rig_dispatch`
   — so the registry/dispatch half (§2.3, §2.4 tail) is shared, but `rig_line_feed`/
   `rig_tokenize` (and their quoting / `#` comments / overflow + syntax errors)
-  never run. `rig_getc()` always returns `-1`. One user-visible consequence: an
-  *unknown* command is rejected by Zephyr's shell (the subcommand doesn't match,
-  so `rig_sub_handler` is never called) — the host gets a plain shell message and
-  a timeout, **not** the poll backend's `{"error":{"code":"unknown_cmd"}}`
-  envelope.
+  never run. `rig_getc()` always returns `-1`. An *unknown* command is rejected by
+  Zephyr's shell (the subcommand doesn't match, so `rig_sub_handler` is never
+  called) — but the root `rig` command has a fall-through handler
+  (`rig_root_handler`) that emits the poll backend's
+  `{"error":{"code":"unknown_cmd"}}` envelope instead of letting a plain,
+  un-framed shell message escape (which would only surface to the host as an
+  opaque `RiglinkTimeout`). The "subcommand name too long" guard in
+  `rig_sub_handler` is framed the same way (a `bad_args`/syntax envelope), so the
+  host *always* gets a parseable response over this backend.
 * **Output.** `rig_putc` writes through `shell_fprintf(active_shell, …)` one byte
   at a time, not the poll backend's transport. `active_shell` is set only for the
   duration of a dispatch; events and the boot `ready` fall back to the global UART
@@ -499,6 +503,16 @@ backend, unchanged.
   event with that name whose fields match the `**match` kwargs; pop and return
   it, or `RiglinkTimeout`. `drain_events()` / `.events` / `.logs` / `.console` /
   `.transcript` expose the buffered state; `clear_buffers()` resets them.
+* **Loud timeouts.** A `RiglinkTimeout` raised by a command transaction (or
+  `expect_event`) carries a snapshot of recent device output so the four
+  firmware-side root causes (unknown command, pre-response crash, corrupted
+  framing, genuinely slow command) are distinguishable from the exception alone:
+  `recent_console` / `recent_logs` (last `RECENT_LINES_CAP` lines) plus
+  `malformed_count` / `console_count`. The reader thread also keeps cumulative
+  per-kind counters, exposed via `.diagnostics`, and emits a `RuntimeWarning` the
+  moment a malformed sentinel line appears — a spike there is a strong
+  "framing got corrupted" signal. The constructor stays backward-compatible
+  (still takes just a message).
 * `reset(...)` — send `rig.reset` (swallowing timeout/error/connection failures,
   because the device may reboot before replying); if the transport died (USB-CDC
   re-enumeration) stop the reader, `reopen()` the transport, and restart the

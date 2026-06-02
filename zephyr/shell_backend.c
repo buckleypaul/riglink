@@ -104,7 +104,15 @@ static int rig_sub_handler(const struct shell *sh, size_t argc, char **argv)
 	if (c == NULL) {
 		int n = snprintk(prefixed, sizeof(prefixed), "rig.%s", argv[0]);
 		if (n < 0 || n >= (int)sizeof(prefixed)) {
-			shell_error(sh, "riglink: subcommand name too long");
+			/* Frame the error so the host always gets a parseable response
+			 * instead of a plain-text shell_error() line (which would only
+			 * surface as an opaque RiglinkTimeout). */
+			k_mutex_lock(&rig_io_lock, K_FOREVER);
+			active_shell = sh;
+			rig_io_extra_reset();
+			rig_io_err_syntax(argv[0], "subcommand name too long");
+			active_shell = NULL;
+			k_mutex_unlock(&rig_io_lock);
 			return -EINVAL;
 		}
 		c = rig_cmd_find(prefixed);
@@ -134,7 +142,28 @@ static int rig_sub_handler(const struct shell *sh, size_t argc, char **argv)
 	return 0;
 }
 
-SHELL_CMD_REGISTER(rig, &rig_subcmds, "riglink command tree", NULL);
+/* Root handler for the "rig" command. Zephyr's shell invokes this when the
+ * token after "rig" does not match any dynamic subcommand (a typo, or a command
+ * the firmware was built without) — without it, the shell prints a plain-text
+ * "rig: ... not found" line that is NOT sentinel-framed, so the host sees only
+ * an opaque RiglinkTimeout. By emitting a framed unknown_cmd envelope here, the
+ * host ALWAYS gets a parseable response, matching the poll backend's behavior
+ * (samples/echo) for unknown commands. A bare "rig" with no subcommand reports
+ * the missing command name as "rig". */
+static int rig_root_handler(const struct shell *sh, size_t argc, char **argv)
+{
+	/* argv[0] is "rig"; argv[1] (if present) is the unmatched subcommand. */
+	const char *bad = (argc > 1) ? argv[1] : argv[0];
+	k_mutex_lock(&rig_io_lock, K_FOREVER);
+	active_shell = sh;
+	rig_io_extra_reset();
+	rig_io_err_unknown_cmd(bad);
+	active_shell = NULL;
+	k_mutex_unlock(&rig_io_lock);
+	return 0;
+}
+
+SHELL_CMD_REGISTER(rig, &rig_subcmds, "riglink command tree", rig_root_handler);
 
 /* ---------------- event-ring drain ----------------------------------------- */
 

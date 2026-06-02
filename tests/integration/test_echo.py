@@ -46,11 +46,12 @@ def test_reset_clears_state(dev):
 
 
 def test_unknown_command_raises(dev):
+    # Both backends now surface an unknown command as a framed unknown_cmd error
+    # envelope: the poll backend via rig_dispatch, the shell backend via the
+    # rig_root_handler fall-through (Zephyr's shell rejects the unmatched
+    # subcommand before rig_dispatch, so the root handler frames the error
+    # instead of letting a plain-text shell message escape unparsed). See
+    # test_echo_shell.test_shell_unknown_command_returns_framed_error.
     from riglink.exceptions import RiglinkProtocolError
-    if getattr(dev, "_shell_root", None):
-        # Shell backend: an unknown subcommand is rejected by Zephyr's shell
-        # before rig_sub_handler/rig_dispatch run, so there is no riglink error
-        # envelope — see test_echo_shell.test_shell_unknown_command_rejected.
-        pytest.skip("shell backend rejects unknown commands at the shell layer")
     with pytest.raises(RiglinkProtocolError):
         dev._send("no_such_command", [], 1.0)

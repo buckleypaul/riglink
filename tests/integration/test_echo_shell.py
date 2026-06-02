@@ -8,7 +8,7 @@ rig_io_lock that keeps ISR-deferred event lines from splicing into responses.
 import time
 
 import pytest
-from riglink.exceptions import RiglinkAssertError, RiglinkTimeout
+from riglink.exceptions import RiglinkAssertError, RiglinkProtocolError, RiglinkTimeout
 
 # Mirror test_echo.py's expectation: echo_shell exposes the same surface.
 _SHARED_COMMANDS = (
@@ -65,15 +65,16 @@ def test_shell_event_response_interleaving(shell_dev):
     assert shell_dev.expect_event("tick", timeout=2.0)
 
 
-def test_shell_unknown_command_rejected_by_shell(shell_dev):
-    # The documented divergence from the poll backend: an unknown command never
-    # reaches rig_dispatch — Zephyr's shell rejects the unmatched subcommand
-    # before rig_sub_handler runs. So instead of a riglink unknown_cmd error
-    # envelope (what samples/echo returns), the host gets no response at all
-    # (RiglinkTimeout) plus a plain, non-sentinel shell message on the console.
+def test_shell_unknown_command_returns_framed_error(shell_dev):
+    # An unknown subcommand is rejected by Zephyr's shell before rig_sub_handler
+    # runs, so it never reaches rig_dispatch. The shell_backend root handler
+    # (rig_root_handler) catches the fall-through and emits a sentinel-framed
+    # unknown_cmd envelope, so the host gets a parseable RiglinkProtocolError
+    # (matching samples/echo / the poll backend) instead of an opaque timeout.
     shell_dev.clear_buffers()
-    with pytest.raises(RiglinkTimeout):
+    with pytest.raises(RiglinkProtocolError) as ei:
         shell_dev._send("no_such_command", [], 1.0)
+    assert ei.value.code == "unknown_cmd"
     # The rejection must be clean: no corrupted/malformed sentinel line, and the
     # link is still usable for a normal call afterwards.
     assert [c for c in shell_dev.console if c.startswith("<malformed:")] == []
