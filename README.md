@@ -255,6 +255,36 @@ python -m pytest ../tests/integration -q --riglink-port /dev/ttyACM0
 | `CONFIG_RIGLINK_THREAD` | n | Spawn a dedicated thread for `rig_run()` |
 | `CONFIG_RIGLINK_THREAD_STACK_SIZE` | 2048 | Thread stack size |
 | `CONFIG_RIGLINK_THREAD_PRIO` | 5 | Thread priority |
+| `CONFIG_RIGLINK_BACKEND_SHELL` | n | Dispatch commands via Zephyr's shell instead of the built-in pump (see `samples/echo_shell`) |
+
+### Give riglink exclusive use of its UART
+
+riglink assumes it is the **only** writer on the wire that carries its JSON
+frames. The `\x1eRIG ` sentinel lets the host *recover* from unexpected console
+output (non-sentinel lines are filed away, not parsed), but anything that writes
+to the same UART **mid-line** splices bytes into a frame and corrupts it — the
+host then sees a malformed line and a dropped reply. This bit us on a real DK:
+an async (deferred) log flush interleaved with a response and tore the frame.
+
+So point no other backend at that UART. Concretely, in your `prj.conf` (and
+`boards/*.conf` where the value is board-specific):
+
+```conf
+# Keep printk()/console output off the riglink UART.
+CONFIG_UART_CONSOLE=n
+# Keep the (deferred) log backend off the riglink UART. Set per board, since
+# whether logs even route to this UART is board-specific.
+CONFIG_LOG_BACKEND_UART=n
+```
+
+Logging can stay compiled in (`CONFIG_LOG=y`); it's harmless on the wire as long
+as no *backend* targets that UART. If you need firmware-side logs during
+bring-up, route them off-wire (`CONFIG_LOG_BACKEND_RTT=y`) instead of
+re-enabling the UART backend, or accept `CONFIG_LOG_BACKEND_SHELL=y` (logs are
+then serialised against responses rather than racing them). The shell backend
+additionally needs `CONFIG_SHELL_PROMPT_UART=""`, `CONFIG_SHELL_VT100_COMMANDS=n`,
+and `CONFIG_SHELL_ECHO_STATUS=n` so the shell itself stays quiet. See
+`samples/echo_shell/prj.conf` for the full set.
 
 ---
 
