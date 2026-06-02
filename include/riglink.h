@@ -49,7 +49,11 @@ bool rig_parse_double (const char *tok, double   *out);
 bool rig_parse_i_range(const char *tok, int64_t lo, int64_t hi, int64_t *out);
 bool rig_parse_u_range(const char *tok, uint64_t hi, uint64_t *out);
 /* Copy `tok` into `buf`, truncating to `bufsz - 1`. Returns false only when
- * tok is NULL or bufsz is 0 (an over-long string is truncated, not an error). */
+ * tok is NULL or bufsz is 0. NOTE: an over-long string is *silently truncated*,
+ * not rejected — a hand-rolled trampoline that wants the over-length token to be
+ * an error (the usual case: a clipped value decodes wrong far from the cause)
+ * must call rig_str_arg_too_long() first and emit rig_io_err_arg_too_long().
+ * The generated RIG_DECL_str trampoline already does exactly this. */
 bool rig_parse_str    (const char *tok, char *buf, size_t bufsz);
 /* True if `tok` would not fit in a char[bufsz] buffer (strlen(tok) >= bufsz),
  * i.e. rig_parse_str would truncate it. Stores strlen(tok) in *got (may be

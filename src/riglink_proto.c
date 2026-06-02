@@ -146,6 +146,6 @@ bool rig_str_arg_too_long(const char *tok, size_t bufsz, int *got) {
      * clear arg_too_long error rather than dispatch a silently-clipped value. */
     if (!tok || bufsz == 0) { if (got) *got = 0; return false; }
     size_t n = strlen(tok);
-    if (got) *got = (int)n;
+    if (got) *got = (n <= (size_t)INT_MAX) ? (int)n : INT_MAX;   /* clamp the report */
     return n >= bufsz;
 }
