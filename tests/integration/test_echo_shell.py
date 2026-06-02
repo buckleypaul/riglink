@@ -65,6 +65,24 @@ def test_shell_event_response_interleaving(shell_dev):
     assert shell_dev.expect_event("tick", timeout=2.0)
 
 
+def test_shell_arg_bearing_command_not_rejected_by_precheck(shell_dev):
+    # Regression guard for the rig_dyn_get() arg-count bug: the dynamic-command
+    # getter must zero entry->args, otherwise the shell reads uninitialised stack
+    # for args.mandatory and runs its own argc range check, rejecting arg-bearing
+    # commands with a plain "wrong parameter count" line on the console while no
+    # riglink response is emitted (the host then times out). Because the value is
+    # stack garbage the failure is nondeterministic, so hammer the call to make a
+    # latent regression reliably visible.
+    shell_dev.clear_buffers()
+    for i in range(25):
+        # add (2 args) and check_even (1 arg) both exercise the precheck path.
+        assert shell_dev.add(i, 2) == {"ret": i + 2}
+        assert shell_dev.check_even(i * 2) == {"ret": i}
+    # The shell's rejection lands on the console as a non-sentinel line, so a
+    # clean console proves the precheck never fired.
+    assert shell_dev.console == [], shell_dev.console
+
+
 def test_shell_unknown_command_rejected_by_shell(shell_dev):
     # The documented divergence from the poll backend: an unknown command never
     # reaches rig_dispatch — Zephyr's shell rejects the unmatched subcommand
