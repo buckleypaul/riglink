@@ -14,7 +14,37 @@ host library drives it.
 
 ---
 
+## Choosing a backend (Zephyr)
+
+riglink has two transports. **On real hardware, prefer the shell backend.**
+
+| Backend | Kconfig | Who owns the UART / RX | Use it when |
+|---------|---------|------------------------|-------------|
+| **Shell (recommended)** | `CONFIG_RIGLINK_BACKEND_SHELL=y` | Zephyr's shell — IRQ-driven RX, line assembly, log multiplexing, all for free | Almost always on real hardware |
+| **Poll (bare-metal fallback)** | default | *You* provide `rig_putc`/`rig_getc` and drive `rig_run()` | No shell subsystem; non-Zephyr targets; tightest footprint |
+
+> **Trap: do not feed `rig_getc()` from `uart_poll_in()` on real hardware.**
+> The obvious poll-backend shim —
+> `int rig_getc(void){ unsigned char c; return uart_poll_in(u,&c)==0?(int)c:-1; }` —
+> **drops RX bytes above ~9600 baud.** `uart_poll_in()` only returns whatever is
+> in the UART's RX register at the instant it is called, and the pump only polls
+> between other work, so at 115200 baud (a byte every ~87 us) bytes are overwritten
+> before the loop comes back. The host then sees truncated command lines and times
+> out. It is fine for `native_sim`, and that is the only place this repo's samples
+> use it.
+>
+> On a board, either use the **shell backend**, or enable the library's reference
+> interrupt-driven UART shim: **`CONFIG_RIGLINK_UART_IRQ_RX=y`** (poll backend).
+> That option provides `rig_putc`/`rig_getc` for you — RX is interrupt-driven into
+> a ring buffer that `rig_getc()` drains, so no bytes are lost. Pick the UART with
+> the `zephyr,riglink-uart` chosen node (falls back to `zephyr,console`); when it
+> is on, do **not** implement `rig_putc`/`rig_getc` yourself. See
+> [`samples/echo`](samples/echo) and ARCHITECTURE.md §2.10.
+
 ## Firmware quickstart
+
+This quickstart shows the **poll backend** (it is the minimal path and works on
+any target). For Zephyr on hardware, see the backend table above first.
 
 ### 1. Implement the three shims
 
@@ -25,6 +55,9 @@ int  rig_putc(char c)   { /* write c to your serial port; return 0 */ }
 int  rig_getc(void)     { /* read one byte (non-blocking); return -1 if empty */ }
 void rig_reset(void)    { /* reboot or re-initialise your target */ }
 ```
+
+> On Zephyr, set `CONFIG_RIGLINK_UART_IRQ_RX=y` instead of hand-rolling these two
+> shims — it ships a safe interrupt-driven implementation (see the trap above).
 
 ### 2. Expose functions
 
@@ -255,6 +288,10 @@ python -m pytest ../tests/integration -q --riglink-port /dev/ttyACM0
 | `CONFIG_RIGLINK_THREAD` | n | Spawn a dedicated thread for `rig_run()` |
 | `CONFIG_RIGLINK_THREAD_STACK_SIZE` | 2048 | Thread stack size |
 | `CONFIG_RIGLINK_THREAD_PRIO` | 5 | Thread priority |
+| `CONFIG_RIGLINK_UART_IRQ_RX` | n | Poll backend: use the reference interrupt-driven UART shim (provides `rig_putc`/`rig_getc`; no dropped RX bytes). Excludes the shell backend |
+| `CONFIG_RIGLINK_UART_IRQ_RX_BUF_SIZE` | 256 | RX ring buffer size (bytes) for that shim |
+| `CONFIG_RIGLINK_BACKEND_SHELL` | n | Dispatch commands via Zephyr's shell (recommended on hardware; owns the UART, no `rig_putc`/`rig_getc`/`rig_run()`) |
+| `CONFIG_RIGLINK_SHELL_EVENT_POLL_MS` | 10 | Shell backend: event-ring drain period (ms) |
 
 ---
 

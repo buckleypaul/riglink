@@ -103,11 +103,46 @@ config RIGLINK_THREAD_PRIO
 	default 5
 	depends on RIGLINK_THREAD
 
+config RIGLINK_UART_IRQ_RX
+	bool "Reference IRQ-driven UART shim for the poll backend"
+	depends on !RIGLINK_BACKEND_SHELL
+	select SERIAL
+	select UART_INTERRUPT_DRIVEN
+	select RING_BUFFER
+	select REBOOT
+	help
+	  Provide a ready-made rig_putc / rig_getc pair for the poll backend
+	  (zephyr/uart_irq_rx.c): RX is interrupt-driven into a ring buffer that
+	  rig_getc() drains, so bytes are not dropped at non-trivial baud rates.
+	  The hand-rolled uart_poll_in() rig_getc shown in older docs/samples
+	  loses bytes above ~9600 baud on real hardware because the pump only
+	  polls between other work and the UART RX register holds a single byte.
+
+	  When this is enabled the application MUST NOT implement rig_putc /
+	  rig_getc itself; it still calls rig_init() / rig_run() (or uses
+	  CONFIG_RIGLINK_THREAD) as usual. Pick the UART with the
+	  `zephyr,riglink-uart` chosen node (falls back to `zephyr,console`).
+
+	  For most real-hardware setups CONFIG_RIGLINK_BACKEND_SHELL is the
+	  recommended transport; reach for this shim when you want the bare poll
+	  backend without the shell subsystem. Mutually exclusive with the shell
+	  backend (which owns the UART itself).
+
+config RIGLINK_UART_IRQ_RX_BUF_SIZE
+	int "RX ring buffer size for the IRQ-driven UART shim (bytes)"
+	default 256
+	depends on RIGLINK_UART_IRQ_RX
+	help
+	  Bytes buffered between the RX ISR and rig_getc(). Size it for your
+	  longest command line plus the worst-case latency before rig_run() next
+	  drains it; overflow bytes are dropped in the ISR.
+
 config RIGLINK_BACKEND_SHELL
 	bool "Dispatch riglink commands via Zephyr's shell subsystem"
 	default n
 	select SHELL
 	select SHELL_BACKEND_SERIAL
+	select REBOOT
 	help
 	  Bridge riglink to Zephyr's shell: commands are registered as
 	  subcommands of a root "rig" command, the shell thread does line

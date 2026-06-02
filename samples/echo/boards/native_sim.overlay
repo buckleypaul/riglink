@@ -1,6 +1,9 @@
 / {
     chosen {
-        /* keep zephyr,console on the default native uart; riglink uses uart1 */
+        /* keep zephyr,console on the default native uart; riglink uses uart1.
+         * `zephyr,riglink-uart` is what the optional IRQ-driven shim
+         * (CONFIG_RIGLINK_UART_IRQ_RX) reads; harmless when that option is off. */
+        zephyr,riglink-uart = &uart1;
     };
 };
 
