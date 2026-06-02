@@ -17,7 +17,7 @@ class RiglinkProtocolError(RiglinkError):
 
     Attributes:
         code:    the error code string ("unknown_cmd", "arg_count", "bad_args",
-                 "assert", "internal", ...).
+                 "arg_too_long", "assert", "internal", ...).
         details: the rest of the envelope's "error" object (a dict).
         cmd:     the command name the device echoed, if any.
     """

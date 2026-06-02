@@ -75,6 +75,11 @@ RIG_TEST(io_err_badarg) {
     RIG_CHECK_STR_EQ(rig_mock_out(),
         "\x1eRIG {\"cmd\":\"foo\",\"error\":{\"code\":\"bad_args\",\"arg\":1,\"expected\":\"int\"}}\n");
 }
+RIG_TEST(io_err_arg_too_long) {
+    rig_io_err_arg_too_long("setkey", 0, 64, 63);
+    RIG_CHECK_STR_EQ(rig_mock_out(),
+        "\x1eRIG {\"cmd\":\"setkey\",\"error\":{\"code\":\"arg_too_long\",\"arg\":0,\"got\":64,\"max\":63}}\n");
+}
 RIG_TEST(io_err_overflow_no_cmd) {
     rig_io_err_overflow(NULL);
     RIG_CHECK_STR_EQ(rig_mock_out(),

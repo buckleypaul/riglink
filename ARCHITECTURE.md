@@ -77,7 +77,8 @@ always evaluates to a `dict`: `{"ret": <value>, **extras}` — see §3.3.
 
 Error codes: `unknown_cmd`, `arg_count` (with `expected`/`got`), `bad_args`
 (with `arg`/`expected` for a bad token, or `msg` for "line too long" / "syntax
-error"), `assert` (with `file`/`line`/`msg`), `internal` (with `msg`).
+error"), `arg_too_long` (a `str` arg longer than `RIG_STR_ARG_SIZE - 1`; carries
+`arg`/`got`/`max`), `assert` (with `file`/`line`/`msg`), `internal` (with `msg`).
 
 ---
 
@@ -161,7 +162,10 @@ selected by a tiny `RIG__ISEMPTYV_n` table) does, in order:
 1. Arity check: `if (argc != N) { rig_io_err_argcount(...); return; }`.
 2. Argument parsing: for each arg `i`, `RIG_PP__DECL_ONE(i, Ti)` expands to
    `RIG_DECL_Ti(i, cmd)`. For scalars that's `RIG_CTYPE_Ti _ai; if (!rig_parse_Ti_(argv[i], &_ai)) { rig_io_err_badarg(cmd, i, "Ti"); return; }`.
-   For `str` it's a stack `char _ai[RIG_STR_ARG_SIZE]` filled by `rig_parse_str`.
+   For `str` it's a stack `char _ai[RIG_STR_ARG_SIZE]` filled by `rig_parse_str`,
+   guarded by `rig_str_arg_too_long(argv[i], sizeof _ai, &got)`: a token longer
+   than `RIG_STR_ARG_SIZE - 1` raises an `arg_too_long` error (carrying `arg`,
+   `got`, `max`) instead of being silently truncated and dispatched.
    The `rig_parse_<kw>_` inline wrappers in `riglink_pp.h` are width-checked: e.g.
    `rig_parse_int8_t_` calls `rig_parse_i_range(t, INT8_MIN, INT8_MAX, ...)`, so
    an out-of-range token is a `bad_args` error, not a silent truncation.

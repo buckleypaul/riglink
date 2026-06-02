@@ -146,5 +146,16 @@ RIG_TEST(parse_u_range_narrowing) {
     RIG_CHECK(rig_parse_u_range("255", 255, &v) && v == 255);
     RIG_CHECK(!rig_parse_u_range("256", 255, &v));            /* uint8 overflow */
 }
+RIG_TEST(str_arg_too_long_detects_overflow) {
+    int got = -1;
+    /* fits exactly (bufsz-1 chars): 7 chars into char[8] is fine */
+    RIG_CHECK(!rig_str_arg_too_long("abcdefg", 8, &got) && got == 7);
+    /* bufsz chars would need a bufsz+1 buffer → overflow, original len reported */
+    RIG_CHECK(rig_str_arg_too_long("abcdefgh", 8, &got) && got == 8);
+    RIG_CHECK(rig_str_arg_too_long("abcdefghijk", 8, &got) && got == 11);
+    /* NULL / zero-size are not "too long" (rig_parse_str rejects them as bad_args) */
+    RIG_CHECK(!rig_str_arg_too_long(NULL, 8, &got));
+    RIG_CHECK(!rig_str_arg_too_long("x", 0, &got));
+}
 
 RIG_TEST_MAIN()

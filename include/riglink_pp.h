@@ -152,8 +152,15 @@ static inline bool rig_parse_ptrdiff_t_(const char*t,ptrdiff_t*o){int64_t v; if(
 #define RIG_DECL_ptrdiff_t(i,cmd) RIG_DECL_SCALAR(i,cmd,ptrdiff_t)
 #define RIG_DECL_float(i,cmd)     RIG_DECL_SCALAR(i,cmd,float)
 #define RIG_DECL_double(i,cmd)    RIG_DECL_SCALAR(i,cmd,double)
+/* A `str` arg longer than the buffer would be silently truncated by
+ * rig_parse_str (e.g. a 64-char hex key clipped to 63 → odd length →
+ * confusing downstream decode failure). Detect that here and emit a clear
+ * arg_too_long error instead of dispatching with a corrupted value. */
 #define RIG_DECL_str(i,cmd) \
     char RIG_PP_CAT(_a, i)[RIG_STR_ARG_SIZE]; \
+    { int RIG_PP_CAT(_got, i); \
+      if (rig_str_arg_too_long(argv[i], sizeof RIG_PP_CAT(_a, i), &RIG_PP_CAT(_got, i))) { \
+          rig_io_err_arg_too_long(cmd, i, RIG_PP_CAT(_got, i), (int)(sizeof RIG_PP_CAT(_a, i)) - 1); return; } } \
     if (!rig_parse_str(argv[i], RIG_PP_CAT(_a, i), sizeof RIG_PP_CAT(_a, i))) { rig_io_err_badarg(cmd, i, "str"); return; }
 /* applied per index by the trampoline: */
 #define RIG_PP__DECL_ONE(i, T)  RIG_DECL_##T(i, cmd)

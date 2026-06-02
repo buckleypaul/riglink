@@ -40,6 +40,11 @@ RIG_FN(void, emit_then_event, int) { (void)arg0; rig_emit("a", (int64_t)1); RIG_
  * response must still be valid JSON (no mid-token cutoff) and flag the overflow. */
 RIG_FN(void, flood, int) { (void)arg0; for (int i = 0; i < 100; i++) rig_emit("k", (int64_t)i); }
 
+/* arg_too_long: a `str` arg longer than RIG_STR_ARG_SIZE-1 must surface a clear
+ * arg_too_long error rather than dispatch a silently-truncated value. This fn
+ * echoes the received length so a fitting value is observably *not* truncated. */
+RIG_FN(int, take_str, str) { return (int)strlen(arg0); }
+
 static void run_line(const char *line) {
     struct rig_tokens t;
     if (rig_tokenize(line, &t) != 0) { rig_io_err_syntax(t.name, "syntax error"); return; }
@@ -130,6 +135,32 @@ RIG_TEST(reg_extra_fields_overflow_is_valid_json) {
     RIG_CHECK(strstr(out, "\"cmd\":\"flood\"") != NULL);
 
     /* a following command's response is unaffected */
+    rig_mock_reset();
+    run_line("rig.echo ok");
+    RIG_CHECK_STR_EQ(rig_mock_out(), "\x1eRIG {\"cmd\":\"rig.echo\",\"ret\":[\"ok\"]}\n");
+}
+
+/* ---- str arg overflow must be a clear error, not a silent truncation -------- */
+RIG_TEST(reg_str_arg_overflow_is_arg_too_long) {
+    /* RIG_STR_ARG_SIZE defaults to 64 → max usable length is 63. */
+    char fits[64];   memset(fits, 'a', 63); fits[63] = '\0';        /* exactly 63 */
+    char over[80];   memset(over, 'b', 64); over[64] = '\0';        /* 64 → overflows */
+    char line[128];
+
+    /* a value that fits dispatches normally and is NOT truncated (ret == 63) */
+    snprintf(line, sizeof line, "take_str %s", fits);
+    run_line(line);
+    RIG_CHECK_STR_EQ(rig_mock_out(), "\x1eRIG {\"cmd\":\"take_str\",\"ret\":63}\n");
+
+    /* a value one char too long → arg_too_long, with cmd / arg / got / max */
+    rig_mock_reset();
+    snprintf(line, sizeof line, "take_str %s", over);
+    run_line(line);
+    RIG_CHECK_STR_EQ(rig_mock_out(),
+        "\x1eRIG {\"cmd\":\"take_str\",\"error\":{\"code\":\"arg_too_long\",\"arg\":0,\"got\":64,\"max\":63}}\n");
+
+    /* the over-long command did not dispatch the body with a truncated value:
+     * a following command's response is clean */
     rig_mock_reset();
     run_line("rig.echo ok");
     RIG_CHECK_STR_EQ(rig_mock_out(), "\x1eRIG {\"cmd\":\"rig.echo\",\"ret\":[\"ok\"]}\n");

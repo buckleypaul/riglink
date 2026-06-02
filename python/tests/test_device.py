@@ -3,7 +3,7 @@ import riglink
 from riglink._wire import DEFAULT_SENTINEL
 from riglink.exceptions import RiglinkAssertError, RiglinkProtocolError, RiglinkSignatureError, RiglinkTimeout
 from riglink.transport import LoopbackTransport
-from tests._fakedev import FakeDevice, _FakeAssert
+from tests._fakedev import FakeDevice, _FakeArgTooLong, _FakeAssert
 
 
 @pytest.fixture
@@ -79,6 +79,24 @@ def test_device_error_envelope_raises(fd):
     with pytest.raises(RiglinkProtocolError) as ei:
         d._send("frobnicate", [], 1.0)
     assert ei.value.code == "unknown_cmd"
+    d.close()
+
+
+def test_arg_too_long_envelope_surfaces_code_and_details(fd):
+    """An over-length `str` arg yields code 'arg_too_long' with arg/got/max — the
+    generic RiglinkProtocolError path carries it, no special host handling needed."""
+    def _setkey(key):
+        raise _FakeArgTooLong(0, len(key), 63)
+
+    fd.command("setkey", "void", ["str"])(_setkey)
+    d = riglink.connect(fd.transport, wait_ready=True, ready_timeout=1.0)
+    with pytest.raises(RiglinkProtocolError) as ei:
+        d.setkey("a" * 64)
+    assert ei.value.code == "arg_too_long"
+    assert ei.value.details["arg"] == 0
+    assert ei.value.details["got"] == 64
+    assert ei.value.details["max"] == 63
+    assert ei.value.cmd == "setkey"
     d.close()
 
 
