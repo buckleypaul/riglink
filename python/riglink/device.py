@@ -6,6 +6,7 @@ import collections
 import queue
 import threading
 import time
+import warnings
 from typing import Any, Iterable, Optional
 
 from ._wire import DEFAULT_SENTINEL, FLOAT_KEYWORDS, INT_KEYWORDS, classify, encode_call
@@ -16,6 +17,11 @@ from .exceptions import (
     RiglinkTimeout,
 )
 from .transport import SerialTransport, Transport
+
+#: How many recent console/log lines to attach to a RiglinkTimeout. Bounds the
+#: snapshot so a chatty device can't bloat the exception message (the reader's
+#: own ._console / ._logs buffers stay full-fidelity for .console / .logs).
+RECENT_LINES_CAP = 20
 
 
 class _Call:
@@ -69,6 +75,17 @@ class Device:
         self._logs: list[str] = []
         self._console: list[str] = []
         self._transcript: list[tuple[str, str]] = []
+        # Cumulative line-kind counters (survive buffer trimming). A timeout
+        # accompanied by a spike in malformed/console lines is a strong
+        # "framing got corrupted" signal — see the diagnostics property.
+        self._counts = {"response": 0, "event": 0, "log": 0,
+                        "console": 0, "malformed": 0}
+        # Guards the diagnostic buffers (_logs, _console, _counts) against the
+        # reader thread: the reader appends/increments while _timeout_error,
+        # .diagnostics and clear_buffers() read/reset. Without it the snapshot
+        # races the very concurrency this feature exists to diagnose (and the
+        # list/dict ops aren't atomic on PyPy).
+        self._buf_lock = threading.Lock()
         self._call_lock = threading.Lock()
         self._signatures: dict[str, dict] = {}
         self._attr_map: dict[str, Optional[str]] = {}   # attr name -> command name (None if ambiguous)
@@ -95,6 +112,19 @@ class Device:
             while b"\n" in self._buf:
                 line, self._buf = self._buf.split(b"\n", 1)
                 kind, payload = classify(line, self._sentinel)
+                # _buf_lock covers the diagnostic buffers (_counts/_logs/_console)
+                # so _timeout_error / .diagnostics see a consistent snapshot. It
+                # is NOT held across _pending.put or the _evcond block (those have
+                # their own synchronization) to keep the critical section tight.
+                with self._buf_lock:
+                    self._counts[kind] = self._counts.get(kind, 0) + 1
+                    if kind == "log":
+                        self._logs.append(payload)
+                    elif kind == "console":
+                        if payload:
+                            self._console.append(payload)
+                    elif kind == "malformed":
+                        self._console.append(f"<malformed: {payload}>")
                 if kind == "response":
                     self._transcript.append(("recv", repr(payload)))
                     self._pending.put(payload)
@@ -105,17 +135,22 @@ class Device:
                         self._evcond.notify_all()
                 elif kind == "log":
                     self._transcript.append(("recv", f"log: {payload}"))
-                    self._logs.append(payload)
-                elif kind == "console":
-                    if payload:
-                        self._console.append(payload)
-                else:  # malformed
-                    self._console.append(f"<malformed: {payload}>")
+                elif kind == "malformed":
+                    # A malformed sentinel line means the framing was corrupted
+                    # (splice, dropped bytes). Surface it immediately — a later
+                    # timeout would otherwise be the only, opaque, symptom.
+                    # stacklevel=1: we're in the reader thread, so a higher level
+                    # would point at the thread machinery, not user code.
+                    warnings.warn(
+                        f"riglink: malformed device line (framing corrupted?): {payload!r}",
+                        RuntimeWarning, stacklevel=1,
+                    )
                 if self._on_line is not None:
                     try:
                         self._on_line(kind, payload)
                     except Exception as e:
-                        self._console.append(f"<on_line callback error: {e!r}>")
+                        with self._buf_lock:
+                            self._console.append(f"<on_line callback error: {e!r}>")
 
     # -- calls ---------------------------------------------------------
     def _interpret(self, resp: dict) -> dict:
@@ -160,8 +195,27 @@ class Device:
             try:
                 resp = self._pending.get(timeout=timeout)
             except queue.Empty:
-                raise RiglinkTimeout(f"no response to {name!r} within {timeout}s")
+                raise self._timeout_error(f"no response to {name!r} within {timeout}s")
         return self._interpret(resp)
+
+    def _timeout_error(self, message: str) -> RiglinkTimeout:
+        """Build a RiglinkTimeout carrying a snapshot of recent device output.
+
+        Four firmware-side root causes collapse into one opaque timeout: an
+        unknown command (rejected by the shell as plain text), a crash before the
+        response, corrupted framing (malformed lines), or a genuinely slow
+        command. Attaching the last few console/log lines and the malformed
+        count turns a multi-probe investigation into a one-line diagnosis — e.g.
+        a shell ``<cmd>: wrong parameter count`` line shows up right in the error.
+        """
+        with self._buf_lock:
+            return RiglinkTimeout(
+                message,
+                recent_console=self._console[-RECENT_LINES_CAP:],
+                recent_logs=self._logs[-RECENT_LINES_CAP:],
+                malformed_count=self._counts.get("malformed", 0),
+                console_count=self._counts.get("console", 0),
+            )
 
     def _wire_name(self, name: str) -> str:
         """Map a canonical command name to the token(s) the device's frontend
@@ -265,7 +319,7 @@ class Device:
                         return ev
                 remaining = deadline - time.monotonic()
                 if remaining <= 0:
-                    raise RiglinkTimeout(f"no {name!r} event within {timeout}s")
+                    raise self._timeout_error(f"no {name!r} event within {timeout}s")
                 self._evcond.wait(remaining)
 
     def drain_events(self) -> list[dict]:
@@ -281,11 +335,25 @@ class Device:
 
     @property
     def logs(self) -> list[str]:
-        return list(self._logs)
+        with self._buf_lock:
+            return list(self._logs)
 
     @property
     def console(self) -> list[str]:
-        return list(self._console)
+        with self._buf_lock:
+            return list(self._console)
+
+    @property
+    def diagnostics(self) -> dict[str, int]:
+        """Cumulative count of each device line-kind seen on the link
+        (``response``, ``event``, ``log``, ``console``, ``malformed``).
+
+        A timeout paired with a non-zero ``malformed`` count, or a spike in
+        ``console`` lines, points at corrupted framing rather than a slow or
+        crashed command. Counts are cumulative; ``clear_buffers()`` resets them.
+        """
+        with self._buf_lock:
+            return dict(self._counts)
 
     @property
     def command_names(self) -> list[str]:
@@ -306,8 +374,11 @@ class Device:
     def clear_buffers(self) -> None:
         with self._evcond:
             self._events.clear()
-        self._logs.clear()
-        self._console.clear()
+        with self._buf_lock:
+            self._logs.clear()
+            self._console.clear()
+            for k in self._counts:
+                self._counts[k] = 0
         self._transcript.clear()
 
     # -- convenience wrappers for built-ins ---------------------------

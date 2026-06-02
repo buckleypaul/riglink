@@ -39,4 +39,39 @@ class RiglinkAssertError(RiglinkProtocolError):
 
 
 class RiglinkTimeout(RiglinkError):
-    """No response (or no matching event) within the timeout."""
+    """No response (or no matching event) within the timeout.
+
+    Four distinct firmware-side root causes (an unknown command, a crash before
+    the response, a corrupted/un-framed line, or a genuinely slow command) all
+    surface here. To make those less ambiguous, a timeout raised by a command
+    transaction carries a snapshot of recent device output captured by the
+    reader thread:
+
+    Attributes:
+        recent_console:  the last few non-sentinel console lines (incl. any
+                         ``<malformed: ...>`` markers), most recent last.
+        recent_logs:     the last few ``rig_log()`` passthrough lines.
+        malformed_count: total malformed sentinel lines seen on the link.
+        console_count:   total console lines seen on the link.
+
+    Backward-compatible: still constructible with just a message string, in
+    which case the attributes default to empty / zero.
+    """
+
+    def __init__(self, message: str, *, recent_console=None, recent_logs=None,
+                 malformed_count: int = 0, console_count: int = 0) -> None:
+        self.recent_console = list(recent_console or [])
+        self.recent_logs = list(recent_logs or [])
+        self.malformed_count = malformed_count
+        self.console_count = console_count
+        msg = message
+        if self.malformed_count:
+            msg += (f"\n  [{self.malformed_count} malformed line(s) seen — "
+                    "framing may be corrupted]")
+        if self.recent_logs:
+            msg += "\n  recent device logs:"
+            msg += "".join(f"\n    {line}" for line in self.recent_logs)
+        if self.recent_console:
+            msg += "\n  recent device console:"
+            msg += "".join(f"\n    {line}" for line in self.recent_console)
+        super().__init__(msg)
