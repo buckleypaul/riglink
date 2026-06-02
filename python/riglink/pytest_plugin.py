@@ -9,9 +9,39 @@ Options:
                         a leading \\x1e (ASCII RS) is auto-added if absent
   --riglink-shell-root T  root command token for shell-backend devices (e.g.
                         "rig"); default None targets the poll backend
-Also reads [pytest] ini keys: riglink_port (linelist), riglink_baud, riglink_reset.
+Also reads [pytest] ini keys: riglink_port (linelist), riglink_baud, riglink_reset,
+riglink_shell_root.
 
 Per-test override:  @pytest.mark.riglink(reset="session", port="/dev/ttyACM1")
+
+Extending the plugin (no --riglink-port)
+----------------------------------------
+Consumers that produce their own transport/device (e.g. a native_sim PTY built
+on the fly) should *not* re-register --riglink-port or re-implement the `dev`
+fixture.  Instead, override one of these well-known fixtures in their conftest
+and reuse the plugin's `dev` / `riglink_devices` unchanged — keeping the
+reset-scope handling and the transcript-on-failure hook:
+
+  * ``riglink_default_port`` — return a port string (or ``None``).  When no
+    --riglink-port / ini port is configured, the plugin connects this port with
+    ``riglink.connect(...)`` using the same baud / sentinel / shell-root config.
+    Ideal for injecting a native_sim PTY::
+
+        @pytest.fixture(scope="session")
+        def riglink_default_port():
+            from riglink.native_sim import NativeSim
+            ns = NativeSim.build_and_launch("samples/echo")
+            yield ns.pty
+            ns.teardown()   # stops the process + removes the auto-built dir
+
+  * ``riglink_devices_factory`` — for full control, return a ``{port: Device}``
+    mapping (or ``None`` to fall back).  The plugin applies reset-scope, buffer
+    clearing, and transcript capture; the consumer owns teardown of devices it
+    created.
+
+  * ``riglink_default_shell_root`` — app-level default shell-root token, used
+    when neither --riglink-shell-root nor the ``riglink_shell_root`` ini is set.
+    Pin it once for firmware that always uses the shell backend.
 """
 from __future__ import annotations
 
@@ -61,9 +91,19 @@ def _reset_scope(config):
     return _cfg(config, "riglink_reset", "riglink_reset")
 
 
-def _shell_root(config):
-    val = _cfg(config, "riglink_shell_root", "riglink_shell_root")
-    return val or None   # "" / None ini default → poll backend
+def _shell_root(config, default=None):
+    """Shell-root token, with an app-level *default* fallback.
+
+    Resolution order: --riglink-shell-root flag → riglink_shell_root ini →
+    the ``default`` supplied by the ``riglink_default_shell_root`` fixture →
+    None (poll backend). An unset flag is ``None`` and the ini defaults to ""; a
+    value matching either is treated as "not set" and falls through."""
+    val = getattr(config.option, "riglink_shell_root", None)
+    if val in (None, ""):
+        val = config.getini("riglink_shell_root")
+    if val in (None, ""):
+        val = default
+    return val or None   # "" / None → poll backend
 
 
 def _sentinel(config):
@@ -76,31 +116,105 @@ def _sentinel(config):
 
 
 @pytest.fixture(scope="session")
-def riglink_session(request):
-    """{port: Device} for the whole session. Connects each --riglink-port once."""
-    ports = _ports(request.config)
-    if not ports:
-        pytest.skip("no --riglink-port / riglink_port configured")
+def riglink_default_shell_root():
+    """App-level default shell-root token (override in a consumer's conftest).
+
+    Returned when neither --riglink-shell-root nor the riglink_shell_root ini is
+    set, so firmware that always uses the shell backend can pin the root once::
+
+        @pytest.fixture(scope="session")
+        def riglink_default_shell_root():
+            return "rig"
+    """
+    return None
+
+
+@pytest.fixture(scope="session")
+def riglink_default_port():
+    """Default port to connect when no --riglink-port / ini port is configured.
+
+    Override in a consumer's conftest to inject a transport the plugin doesn't
+    know how to spin up (e.g. a native_sim PTY). Return a port string (the
+    plugin connects it with the configured baud / sentinel / shell-root) or
+    ``None`` to fall through to the no-port behaviour (skip)."""
+    return None
+
+
+@pytest.fixture(scope="session")
+def riglink_devices_factory():
+    """Full-control override hook: build the session ``{port: Device}`` map.
+
+    Override in a consumer's conftest to return a ready ``{port: Device}``
+    mapping when --riglink-port is not used. The plugin still applies reset-scope,
+    buffer clearing, and transcript capture, so the consumer keeps all of the
+    plugin's behaviour; but because the consumer built these devices it also owns
+    their teardown (the plugin does NOT ``close()`` them). Return ``None`` to fall
+    through to ``riglink_default_port`` / the configured ports."""
+    return None
+
+
+@pytest.fixture(scope="session")
+def riglink_session(request, riglink_default_port, riglink_devices_factory,
+                    riglink_default_shell_root):
+    """{port: Device} for the whole session.
+
+    Devices come from (in order): the ``riglink_devices_factory`` override, the
+    configured --riglink-port / ini ports, or a ``riglink_default_port``
+    override — connected once with the configured baud / sentinel / shell-root.
+    The session-scope reset (when configured) and ``close()`` run here for every
+    source, so downstream fixtures and the transcript hook work identically."""
     baud = _baud(request.config)
     sentinel = _sentinel(request.config)
-    shell_root = _shell_root(request.config)
-    devices: dict = {}
-    try:
-        for p in ports:
-            devices[p] = riglink.connect(p, baud, sentinel=sentinel, shell_root=shell_root)
-    except Exception:
+    shell_root = _shell_root(request.config, default=riglink_default_shell_root)
+
+    # 1. Full-control factory wins, if it produced anything.
+    factory_devices = riglink_devices_factory
+    if factory_devices:
+        devices: dict = dict(factory_devices)
+        owned = False  # consumer owns lifetimes it created
+    else:
+        ports = _ports(request.config)
+        if not ports and riglink_default_port:
+            ports = [riglink_default_port]
+        if not ports:
+            pytest.skip("no --riglink-port / riglink_port configured")
+        devices = {}
+        owned = True
+        try:
+            for p in ports:
+                devices[p] = riglink.connect(p, baud, sentinel=sentinel,
+                                             shell_root=shell_root)
+        except Exception:
+            for d in devices.values():
+                try:
+                    d.close()
+                except Exception:
+                    pass
+            raise
+
+    if _reset_scope(request.config) == "session":
+        try:
+            for d in devices.values():
+                d.reset()
+        except Exception:
+            # Leave no half-reset session behind. Owned devices we close; for
+            # factory-supplied devices the consumer owns teardown, but we still
+            # re-raise so the failure surfaces rather than running on an
+            # indeterminate device set.
+            if owned:
+                for d in devices.values():
+                    try:
+                        d.close()
+                    except Exception:
+                        pass
+            raise
+    yield devices
+    if owned:
         for d in devices.values():
             try:
                 d.close()
             except Exception:
                 pass
-        raise
-    if _reset_scope(request.config) == "session":
-        for d in devices.values():
-            d.reset()
-    yield devices
-    for d in devices.values():
-        d.close()
 
 
 def _marker_opts(request):
