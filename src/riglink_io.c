@@ -266,6 +266,10 @@ void rig_io_err_badarg(const char *cmd, int arg, const char *expected_type) {
     rig__err_open(cmd); rig_emit_str("code", "bad_args");
     rig_emit_i64("arg", arg); rig_emit_str("expected", expected_type); rig__err_close();
 }
+void rig_io_err_arg_too_long(const char *cmd, int arg, int got, int max) {
+    rig__err_open(cmd); rig_emit_str("code", "arg_too_long");
+    rig_emit_i64("arg", arg); rig_emit_i64("got", got); rig_emit_i64("max", max); rig__err_close();
+}
 void rig_io_err_overflow(const char *cmd) {
     rig__err_open(cmd); rig_emit_str("code", "bad_args"); rig_emit_str("msg", "line too long"); rig__err_close();
 }

@@ -82,6 +82,9 @@ class FakeDevice:
         except _FakeBadArg as e:
             self.transport.feed(_frame({"cmd": name, "error": {"code": "bad_args", "arg": e.idx, "expected": e.typ}}))
             return
+        except _FakeArgTooLong as e:
+            self.transport.feed(_frame({"cmd": name, "error": {"code": "arg_too_long", "arg": e.idx, "got": e.got, "max": e.maxlen}}))
+            return
         if ret == "void":
             extras = value if isinstance(value, dict) else {}
             self.transport.feed(_frame({"cmd": name, **extras, "ret": None}))
@@ -104,6 +107,12 @@ class _FakeBadArg(Exception):
     def __init__(self, idx: int, typ: str) -> None:
         self.idx, self.typ = idx, typ
         super().__init__(f"arg {idx}: expected {typ}")
+
+
+class _FakeArgTooLong(Exception):
+    def __init__(self, idx: int, got: int, maxlen: int) -> None:
+        self.idx, self.got, self.maxlen = idx, got, maxlen
+        super().__init__(f"arg {idx}: {got} chars exceeds max {maxlen}")
 
 
 def _tokenize(line: str) -> list[str]:

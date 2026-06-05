@@ -138,3 +138,14 @@ bool rig_parse_str(const char *tok, char *buf, size_t bufsz) {
     memcpy(buf, tok, n); buf[n] = '\0';
     return true;
 }
+
+bool rig_str_arg_too_long(const char *tok, size_t bufsz, int *got) {
+    /* A token of `bufsz` or more chars can't fit alongside the NUL terminator
+     * in a char[bufsz] buffer, so rig_parse_str would truncate it. Report that
+     * up-front (with the original length in *got) so the caller can raise a
+     * clear arg_too_long error rather than dispatch a silently-clipped value. */
+    if (!tok || bufsz == 0) { if (got) *got = 0; return false; }
+    size_t n = strlen(tok);
+    if (got) *got = (n <= (size_t)INT_MAX) ? (int)n : INT_MAX;   /* clamp the report */
+    return n >= bufsz;
+}

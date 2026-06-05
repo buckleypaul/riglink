@@ -49,8 +49,17 @@ bool rig_parse_double (const char *tok, double   *out);
 bool rig_parse_i_range(const char *tok, int64_t lo, int64_t hi, int64_t *out);
 bool rig_parse_u_range(const char *tok, uint64_t hi, uint64_t *out);
 /* Copy `tok` into `buf`, truncating to `bufsz - 1`. Returns false only when
- * tok is NULL or bufsz is 0 (an over-long string is truncated, not an error). */
+ * tok is NULL or bufsz is 0. NOTE: an over-long string is *silently truncated*,
+ * not rejected — a hand-rolled trampoline that wants the over-length token to be
+ * an error (the usual case: a clipped value decodes wrong far from the cause)
+ * must call rig_str_arg_too_long() first and emit rig_io_err_arg_too_long().
+ * The generated RIG_DECL_str trampoline already does exactly this. */
 bool rig_parse_str    (const char *tok, char *buf, size_t bufsz);
+/* True if `tok` would not fit in a char[bufsz] buffer (strlen(tok) >= bufsz),
+ * i.e. rig_parse_str would truncate it. Stores strlen(tok) in *got (may be
+ * NULL). Used by the RIG_DECL_str trampoline to raise arg_too_long instead of
+ * dispatching a silently-truncated `str` argument. */
+bool rig_str_arg_too_long(const char *tok, size_t bufsz, int *got);
 
 /* ---- output (riglink_io.c) -------------------------------------------- */
 /* Begin a sentinel-framed JSON line: emits RIG_SENTINEL then jcon_start(). */
@@ -81,6 +90,10 @@ void rig_emit_null  (const char *name);
 void rig_io_err_unknown_cmd(const char *cmd);
 void rig_io_err_argcount   (const char *cmd, int expected, int got);
 void rig_io_err_badarg     (const char *cmd, int arg, const char *expected_type);
+/* code "arg_too_long": a `str` argument's token (`got` chars) is longer than the
+ * per-arg buffer can hold (`max` usable chars, i.e. RIG_STR_ARG_SIZE - 1).
+ * Emitted instead of silently truncating the value. */
+void rig_io_err_arg_too_long(const char *cmd, int arg, int got, int max);
 void rig_io_err_overflow   (const char *cmd);          /* code "bad_args", msg "line too long" */
 void rig_io_err_syntax     (const char *cmd, const char *msg);  /* code "bad_args", msg <msg> */
 void rig_io_err_assert     (const char *cmd, const char *file, int line, const char *expr);
